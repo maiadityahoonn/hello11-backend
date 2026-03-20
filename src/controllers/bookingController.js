@@ -223,9 +223,16 @@ export const getScheduledHistory = async (req, res) => {
 // ================= GET BOOKING BY ID =================
 export const getBookingById = async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id)
-      .populate("user", "name mobile profileImage")
-      .populate("driver", "name mobile vehicleModel vehicleNumber rating vehicleType profileImage latitude longitude location");
+    const compact = req.query.compact === "1";
+    let query = Booking.findById(req.params.id);
+
+    if (!compact) {
+      query = query
+        .populate("user", "name mobile profileImage")
+        .populate("driver", "name mobile vehicleModel vehicleNumber rating vehicleType profileImage latitude longitude location");
+    }
+
+    const booking = await query;
 
     if (!booking) {
       return res.status(404).json({
@@ -234,9 +241,11 @@ export const getBookingById = async (req, res) => {
     }
 
     // Check authorization: must be either the user or the driver
-    const authId = req.userId || req.driverId;
-    const isUser = booking.user._id.toString() === authId;
-    const isDriver = booking.driver && booking.driver._id.toString() === authId;
+    const authId = (req.userId || req.driverId || "").toString();
+    const bookingUserId = (booking.user?._id || booking.user || "").toString();
+    const bookingDriverId = (booking.driver?._id || booking.driver || "").toString();
+    const isUser = bookingUserId === authId;
+    const isDriver = bookingDriverId && bookingDriverId === authId;
 
     if (!isUser && !isDriver) {
       return res.status(403).json({

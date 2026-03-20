@@ -218,7 +218,7 @@ export const getDriverById = async (req, res) => {
 // ================= GET DRIVER PROFILE =================
 export const getDriverProfile = async (req, res) => {
   try {
-    const driver = await Driver.findById(req.driverId).select("-password");
+    const driver = await Driver.findById(req.driverId).select("-password").lean();
 
     if (!driver) {
       return res.status(404).json({
@@ -226,33 +226,40 @@ export const getDriverProfile = async (req, res) => {
       });
     }
 
-    // Get booking statistics
-    const completedBookings = await Booking.countDocuments({
-      driver: req.driverId,
-      status: "completed"
-    });
-    const cancelledBookings = await Booking.countDocuments({
-      driver: req.driverId,
-      status: "cancelled"
-    });
-    const totalEarningsAgg = await Booking.aggregate([
-      { $match: { driver: driver._id, status: "completed" } },
-      {
-        $project: {
-          effectiveTotal: {
-            $add: ["$fare", { $ifNull: ["$returnTripFare", 0] }, { $ifNull: ["$penaltyApplied", 0] }, { $ifNull: ["$tollFee", 0] }]
+    // Run independent stats queries in parallel to reduce profile API latency.
+    const [
+      completedBookings,
+      cancelledBookings,
+      totalEarningsAgg,
+      reviewAgg
+    ] = await Promise.all([
+      Booking.countDocuments({
+        driver: req.driverId,
+        status: "completed"
+      }),
+      Booking.countDocuments({
+        driver: req.driverId,
+        status: "cancelled"
+      }),
+      Booking.aggregate([
+        { $match: { driver: driver._id, status: "completed" } },
+        {
+          $project: {
+            effectiveTotal: {
+              $add: ["$fare", { $ifNull: ["$returnTripFare", 0] }, { $ifNull: ["$penaltyApplied", 0] }, { $ifNull: ["$tollFee", 0] }]
+            }
           }
-        }
-      },
-      { $group: { _id: null, total: { $sum: "$effectiveTotal" } } }
+        },
+        { $group: { _id: null, total: { $sum: "$effectiveTotal" } } }
+      ]),
+      Review.aggregate([
+        { $match: { driver: driver._id } },
+        { $group: { _id: null, avgRating: { $avg: "$rating" }, totalReviews: { $sum: 1 } } }
+      ])
     ]);
-    const totalEarnings = totalEarningsAgg[0]?.total || 0;
 
-    // Calculate real rating
-    const reviews = await Review.find({ driver: req.driverId });
-    const avgRating = reviews.length > 0
-      ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
-      : driver.rating; // Fallback to model rating
+    const totalEarnings = totalEarningsAgg[0]?.total || 0;
+    const avgRating = reviewAgg[0]?.avgRating ?? driver.rating;
 
     res.json({
       driver: {
@@ -1083,15 +1090,51 @@ export const updateBookingStatus = async (req, res) => {
 // ================= GET DRIVER BOOKING HISTORY =================
 export const getDriverHistory = async (req, res) => {
   try {
-    const { page = 1, limit = 20 } = req.query;
+    const {
+      page = 1,
+      limit = 20,
+      status,
+      rideType,
+      paymentStatus,
+      dateFrom,
+      dateTo,
+      search
+    } = req.query;
 
-    const bookings = await Booking.find({ driver: req.driverId })
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 20, 1), 50);
+
+    const filters = { driver: req.driverId };
+    if (status && status !== "all") {
+      filters.status = status;
+    }
+    if (rideType && rideType !== "all") {
+      filters.rideType = rideType;
+    }
+    if (paymentStatus && paymentStatus !== "all") {
+      filters.paymentStatus = paymentStatus;
+    }
+    if (dateFrom || dateTo) {
+      filters.createdAt = {};
+      if (dateFrom) filters.createdAt.$gte = new Date(dateFrom);
+      if (dateTo) filters.createdAt.$lte = new Date(dateTo);
+    }
+    if (search && String(search).trim().length > 0) {
+      const text = String(search).trim();
+      filters.$or = [
+        { pickupLocation: { $regex: text, $options: "i" } },
+        { dropLocation: { $regex: text, $options: "i" } }
+      ];
+    }
+
+    const [bookings, total] = await Promise.all([
+      Booking.find(filters)
       .populate("user", "name mobile")
       .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
-
-    const total = await Booking.countDocuments({ driver: req.driverId });
+      .limit(limitNum)
+      .skip((pageNum - 1) * limitNum),
+      Booking.countDocuments(filters)
+    ]);
 
     res.json({
       bookings: bookings.map(booking => ({
@@ -1099,12 +1142,21 @@ export const getDriverHistory = async (req, res) => {
         pickupLocation: booking.pickupLocation,
         dropLocation: booking.dropLocation,
         rideType: booking.rideType,
+        bookingType: booking.bookingType,
         status: booking.status,
         fare: booking.fare,
         tollFee: booking.tollFee || 0,
+        penaltyApplied: booking.penaltyApplied || 0,
+        returnTripFare: booking.returnTripFare || 0,
+        hasReturnTrip: !!booking.hasReturnTrip,
         totalFare: (booking.fare || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0),
         distance: booking.distance,
         paymentStatus: booking.paymentStatus,
+        paymentMethod: booking.paymentMethod || "cash",
+        nightFareAmount: booking.nightFareAmount || booking.nightFare || booking.nightCharge || 0,
+        isNightFare: !!booking.isNightFare,
+        nightFareApplied: !!booking.nightFareApplied,
+        scheduledDate: booking.scheduledDate || null,
         user: booking.user,
         rating: booking.rating || 0,
         feedback: booking.feedback || "",
@@ -1112,8 +1164,17 @@ export const getDriverHistory = async (req, res) => {
       })),
       pagination: {
         total,
-        page: parseInt(page),
-        pages: Math.ceil(total / limit)
+        page: pageNum,
+        pages: Math.ceil(total / limitNum),
+        limit: limitNum
+      },
+      filters: {
+        status: status || "all",
+        rideType: rideType || "all",
+        paymentStatus: paymentStatus || "all",
+        dateFrom: dateFrom || null,
+        dateTo: dateTo || null,
+        search: search || ""
       }
     });
   } catch (error) {
