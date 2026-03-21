@@ -1,3 +1,4 @@
+import { clearUserCache } from "../middleware/cacheMiddleware.js";
 import User from "../models/User.js";
 import bcrypt from "bcryptjs";
 import Booking from "../models/Booking.js";

@@ -1,3 +1,4 @@
+import { clearUserCache } from "../middleware/cacheMiddleware.js";
 import Booking from "../models/Booking.js";
 import Driver from "../models/Driver.js";
 import User from "../models/User.js";
