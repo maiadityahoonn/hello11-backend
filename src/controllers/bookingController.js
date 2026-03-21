@@ -65,6 +65,7 @@ export const createBooking = async (req, res) => {
       baseFare: req.body.baseFare || req.body.fare || 0,
       distance: req.body.distance || 0,
       duration: req.body.duration || 0,
+      nightSurcharge: req.body.nightSurcharge || 0,
       fare: req.body.fare || 0,
       totalFare: req.body.fare || 0, // Initial total is just the fare
       tollFee: req.body.tollFee || 0,
