@@ -102,7 +102,9 @@ export const createBooking = async (req, res) => {
       duration: req.body.duration || 0,
       nightSurcharge: req.body.nightSurcharge || 0,
       fare: req.body.fare || 0,
-      totalFare: req.body.fare || 0, // Initial total is just the fare
+      hasReturnTrip: req.body.hasReturnTrip || false,
+      returnTripFare: req.body.returnTripFare || 0,
+      totalFare: req.body.totalFare || req.body.fare || 0,
       tollFee: req.body.tollFee || 0,
       waitingLimit: resolveWaitingLimitSeconds(req.body.distance || 0), // Store in seconds
     });
