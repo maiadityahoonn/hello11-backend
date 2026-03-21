@@ -15,7 +15,7 @@ const resolveWaitingLimitSeconds = (distanceKm = 0) =>
 // ================= CREATE BOOKING =================
 export const createBooking = async (req, res) => {
   try {
-    await clearUserCache(req.userId, 'user');
+    
     const { pickupLocation, dropLocation, rideType, bookingType, scheduledDate } = req.body;
 
     if (!pickupLocation || !dropLocation) {
@@ -137,6 +137,7 @@ export const createBooking = async (req, res) => {
       serverLog(`SCHEDULED: Booking ${booking._id} created with scheduled date ${booking.scheduledDate}. Driver broadcast skipped.`);
     }
 
+    if (req.userId) await clearUserCache(req.userId, 'user');
     res.status(201).json({
       message: "Booking created successfully",
       booking: {

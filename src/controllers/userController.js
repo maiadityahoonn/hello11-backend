@@ -33,7 +33,7 @@ export const getProfile = async (req, res) => {
 // ================= UPDATE USER PROFILE =================
 export const updateProfile = async (req, res) => {
   try {
-    await clearUserCache(req.userId, 'user');
+    
     const { name, mobile, email, gender } = req.body;
 
     // Check if mobile is being changed and if it's already taken
@@ -65,6 +65,7 @@ export const updateProfile = async (req, res) => {
       });
     }
 
+    if (req.userId) await clearUserCache(req.userId, 'user');
     res.json({
       message: "Profile updated successfully",
       user: {
