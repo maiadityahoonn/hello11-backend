@@ -15,6 +15,7 @@ const resolveWaitingLimitSeconds = (distanceKm = 0) =>
 // ================= CREATE BOOKING =================
 export const createBooking = async (req, res) => {
   try {
+    await clearUserCache(req.userId, 'user');
     const { pickupLocation, dropLocation, rideType, bookingType, scheduledDate } = req.body;
 
     if (!pickupLocation || !dropLocation) {
@@ -271,7 +272,9 @@ export const getBookingById = async (req, res) => {
 // ================= CANCEL BOOKING =================
 export const cancelBooking = async (req, res) => {
   try {
+    
     const booking = await Booking.findById(req.params.id);
+    if (booking) 
 
     if (!booking) {
       return res.status(404).json({
@@ -499,8 +502,10 @@ export const startRide = async (req, res) => {
 // ================= COMPLETE RIDE =================
 export const completeRide = async (req, res) => {
   try {
+    
     const { fare, distance } = req.body;
     const booking = await Booking.findById(req.params.id);
+    if (booking) await clearUserCache(booking.user, 'user');
 
     if (!booking) {
       return res.status(404).json({

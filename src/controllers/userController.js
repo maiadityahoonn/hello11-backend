@@ -33,6 +33,7 @@ export const getProfile = async (req, res) => {
 // ================= UPDATE USER PROFILE =================
 export const updateProfile = async (req, res) => {
   try {
+    await clearUserCache(req.userId, 'user');
     const { name, mobile, email, gender } = req.body;
 
     // Check if mobile is being changed and if it's already taken
@@ -106,6 +107,7 @@ export const getHistory = async (req, res) => {
 // ================= CHANGE PASSWORD =================
 export const changePassword = async (req, res) => {
   try {
+    await clearUserCache(req.userId, 'user');
     const { currentPassword, newPassword } = req.body;
 
     if (!currentPassword || !newPassword) {
@@ -145,6 +147,7 @@ export const changePassword = async (req, res) => {
 // ================= SUBMIT REVIEW =================
 export const submitReview = async (req, res) => {
   try {
+    await clearUserCache(req.userId, 'user');
     const { bookingId, rating, feedback } = req.body;
 
     if (!bookingId || !rating) {
