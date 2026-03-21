@@ -66,3 +66,19 @@ export const cacheData = (duration = 60, keyGenerator = null) => {
     }
   };
 };
+
+/**
+ * Helper to clear cache for a specific user or driver
+ * @param {string} id - User or Driver ID
+ * @param {string} type - 'driver' or 'user'
+ */
+export const clearUserCache = async (id, type = 'driver') => {
+  if (!id) return;
+  try {
+    const pattern = `cache:${type}_${id}:*`;
+    await redisClient.clearCachePattern(pattern);
+  } catch (err) {
+    serverLog(`clearUserCache Error: ${err.message}`);
+  }
+};
+

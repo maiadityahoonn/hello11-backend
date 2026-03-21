@@ -1,4 +1,5 @@
 import Driver from "../models/Driver.js";
+import { clearUserCache } from "../middleware/cacheMiddleware.js";
 import Booking from "../models/Booking.js";
 import User from "../models/User.js";
 import Review from "../models/Review.js";
@@ -297,7 +298,8 @@ export const getDriverProfile = async (req, res) => {
 
 // ================= UPDATE DRIVER PROFILE =================
 export const updateDriverProfile = async (req, res) => {
-  try {
+    try {
+    await clearUserCache(req.driverId);
     const { name, mobile, experienceYears } = req.body;
     const updateData = {};
 
@@ -613,7 +615,8 @@ export const updateDriverLocation = async (req, res) => {
 
 // ================= TOGGLE DRIVER AVAILABILITY =================
 export const toggleAvailability = async (req, res) => {
-  try {
+    try {
+    await clearUserCache(req.driverId);
     const driver = await Driver.findById(req.driverId);
 
     if (!driver) {
@@ -639,7 +642,8 @@ export const toggleAvailability = async (req, res) => {
 
 // ================= TOGGLE DRIVER ONLINE STATUS =================
 export const toggleOnlineStatus = async (req, res) => {
-  try {
+    try {
+    await clearUserCache(req.driverId);
     const driver = await Driver.findById(req.driverId);
 
     if (!driver) {
@@ -801,7 +805,8 @@ export const getCurrentBooking = async (req, res) => {
 
 // ================= ACCEPT BOOKING =================
 export const acceptBooking = async (req, res) => {
-  try {
+    try {
+    await clearUserCache(req.driverId);
     const booking = await Booking.findById(req.params.id);
 
     if (!booking) {
@@ -1418,7 +1423,8 @@ export const verifyRideOtp = async (req, res) => {
 
 // ================= COMPLETE RIDE =================
 export const completeRide = async (req, res) => {
-  try {
+    try {
+    await clearUserCache(req.driverId);
     const { fare, distance } = req.body;
     const booking = await Booking.findOne({
       driver: req.driverId,
