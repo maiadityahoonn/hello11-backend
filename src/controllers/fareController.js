@@ -222,8 +222,15 @@ export const calculateFareEstimate = (req, res) => {
  */
 const isNightTime = (bookingTime) => {
   const date = bookingTime ? new Date(bookingTime) : new Date();
-  const hour = date.getHours(); // local server hour
-  return hour >= 18 || hour < 9;
+  
+  // Get hour in IST (Asia/Kolkata)
+  const istHour = parseInt(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    hour12: false,
+  }).format(date));
+
+  return istHour >= 18 || istHour < 9;
 };
 export const calculateTripFare = (req, res) => {
   try {
