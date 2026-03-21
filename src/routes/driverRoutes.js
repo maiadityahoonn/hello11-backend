@@ -33,6 +33,7 @@ import {
 } from "../controllers/driverController.js";
 import { getBookingById } from "../controllers/bookingController.js";
 import { authenticateDriver } from "../middleware/driverAuth.js";
+import { cacheData } from "../middleware/cacheMiddleware.js";
 
 const router = express.Router();
 
@@ -45,7 +46,7 @@ router.post("/register", registerDriver);
 router.post("/login", loginDriver);
 
 // GET /api/drivers/nearby - Get nearby available drivers (public)
-router.get("/nearby", getNearbyDrivers);
+router.get("/nearby", cacheData(10), getNearbyDrivers);
 
 // POST /api/drivers/forgot-password - Request OTP
 router.post("/forgot-password", forgotPassword);
@@ -57,7 +58,7 @@ router.post("/reset-password", resetPassword);
 // ================= PROTECTED ROUTES (Require Authentication) =================
 
 // GET /api/drivers/profile - Get driver profile
-router.get("/profile", authenticateDriver, getDriverProfile);
+router.get("/profile", authenticateDriver, cacheData(15), getDriverProfile);
 
 // PUT /api/drivers/profile - Update driver profile
 router.put("/profile", authenticateDriver, updateDriverProfile);
@@ -81,7 +82,7 @@ router.put("/availability", authenticateDriver, toggleAvailability);
 router.put("/online", authenticateDriver, toggleOnlineStatus);
 
 // GET /api/drivers/available-bookings - Get available bookings for drivers
-router.get("/bookings/available", authenticateDriver, getAvailableBookings);
+router.get("/bookings/available", authenticateDriver, cacheData(10), getAvailableBookings);
 
 // GET /api/drivers/current-booking - Get current assigned booking
 router.get("/bookings/current", authenticateDriver, getCurrentBooking);
@@ -120,7 +121,7 @@ router.get("/earnings", authenticateDriver, getDriverEarnings);
 router.get("/reviews", authenticateDriver, getDriverReviews);
 
 // GET /api/drivers/dashboard - Get driver dashboard stats
-router.get("/dashboard", authenticateDriver, getDriverDashboard);
+router.get("/dashboard", authenticateDriver, cacheData(15), getDriverDashboard);
 
 // PUT /api/drivers/password - Change password
 router.put("/password", authenticateDriver, changePassword);
@@ -130,6 +131,7 @@ router.post("/logout", authenticateDriver, logoutDriver);
 
 // POST /api/drivers/payout - Request payout
 router.post("/payout", authenticateDriver, requestPayout);
+
 // GET /api/drivers/:id - Get driver by ID
 router.get("/:id", getDriverById);
 

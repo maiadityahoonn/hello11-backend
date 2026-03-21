@@ -1214,8 +1214,9 @@ export const getDriverEarnings = async (req, res) => {
     const bookingTotal = (booking) =>
       Number((booking.fare || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0));
 
-    const totalEarnings = completedBookings.reduce((sum, booking) => sum + bookingTotal(booking), 0);
-    const totalTrips = completedBookings.length;
+    const periodBookings = completedBookings.filter(b => new Date(b.createdAt) >= startDate);
+    const totalEarnings = periodBookings.reduce((sum, booking) => sum + bookingTotal(booking), 0);
+    const totalTrips = periodBookings.length;
     const averageFare = totalTrips > 0 ? totalEarnings / totalTrips : 0;
 
     // Calculate today's earnings
