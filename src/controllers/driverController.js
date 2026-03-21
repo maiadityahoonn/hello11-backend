@@ -1,5 +1,4 @@
 import Driver from "../models/Driver.js";
-import { clearUserCache } from "../middleware/cacheMiddleware.js";
 import Booking from "../models/Booking.js";
 import User from "../models/User.js";
 import Review from "../models/Review.js";
@@ -298,8 +297,7 @@ export const getDriverProfile = async (req, res) => {
 
 // ================= UPDATE DRIVER PROFILE =================
 export const updateDriverProfile = async (req, res) => {
-    try {
-    await clearUserCache(req.driverId);
+  try {
     const { name, mobile, experienceYears } = req.body;
     const updateData = {};
 
@@ -615,8 +613,7 @@ export const updateDriverLocation = async (req, res) => {
 
 // ================= TOGGLE DRIVER AVAILABILITY =================
 export const toggleAvailability = async (req, res) => {
-    try {
-    await clearUserCache(req.driverId);
+  try {
     const driver = await Driver.findById(req.driverId);
 
     if (!driver) {
@@ -642,8 +639,7 @@ export const toggleAvailability = async (req, res) => {
 
 // ================= TOGGLE DRIVER ONLINE STATUS =================
 export const toggleOnlineStatus = async (req, res) => {
-    try {
-    await clearUserCache(req.driverId);
+  try {
     const driver = await Driver.findById(req.driverId);
 
     if (!driver) {
@@ -791,6 +787,7 @@ export const getCurrentBooking = async (req, res) => {
         waitingLimit: booking.waitingLimit,
         firstLegPaid: booking.firstLegPaid || false,
         paymentChoice: booking.paymentChoice || "leg_by_leg",
+        nightSurcharge: booking.nightSurcharge || 0,
         createdAt: booking.createdAt
       }
     });
@@ -805,8 +802,7 @@ export const getCurrentBooking = async (req, res) => {
 
 // ================= ACCEPT BOOKING =================
 export const acceptBooking = async (req, res) => {
-    try {
-    await clearUserCache(req.driverId);
+  try {
     const booking = await Booking.findById(req.params.id);
 
     if (!booking) {
@@ -1158,9 +1154,9 @@ export const getDriverHistory = async (req, res) => {
         distance: booking.distance,
         paymentStatus: booking.paymentStatus,
         paymentMethod: booking.paymentMethod || "cash",
-        nightFareAmount: booking.nightSurcharge || 0,
-        isNightFare: (booking.nightSurcharge || 0) > 0,
-        nightFareApplied: (booking.nightSurcharge || 0) > 0,
+        nightFareAmount: booking.nightFareAmount || booking.nightFare || booking.nightCharge || 0,
+        isNightFare: !!booking.isNightFare,
+        nightFareApplied: !!booking.nightFareApplied,
         scheduledDate: booking.scheduledDate || null,
         user: booking.user,
         rating: booking.rating || 0,
@@ -1219,9 +1215,8 @@ export const getDriverEarnings = async (req, res) => {
     const bookingTotal = (booking) =>
       Number((booking.fare || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0));
 
-    const periodBookings = completedBookings.filter(b => new Date(b.createdAt) >= startDate);
-    const totalEarnings = periodBookings.reduce((sum, booking) => sum + bookingTotal(booking), 0);
-    const totalTrips = periodBookings.length;
+    const totalEarnings = completedBookings.reduce((sum, booking) => sum + bookingTotal(booking), 0);
+    const totalTrips = completedBookings.length;
     const averageFare = totalTrips > 0 ? totalEarnings / totalTrips : 0;
 
     // Calculate today's earnings
@@ -1423,8 +1418,7 @@ export const verifyRideOtp = async (req, res) => {
 
 // ================= COMPLETE RIDE =================
 export const completeRide = async (req, res) => {
-    try {
-    await clearUserCache(req.driverId);
+  try {
     const { fare, distance } = req.body;
     const booking = await Booking.findOne({
       driver: req.driverId,
