@@ -8,7 +8,7 @@ import jwt from "jsonwebtoken";
 import Payout from "../models/Payout.js";
 import { serverLog } from "../utils/logger.js";
 import { getIO } from "../utils/socketLogic.js";
-import { calculateAndUpdatePenalty } from "./bookingController.js";
+
 import { sendPushNotification } from "../utils/notifications.js";
 
 // ================= GENERATE JWT TOKEN FOR DRIVER =================
@@ -1899,4 +1899,46 @@ export const resetPassword = async (req, res) => {
     });
   }
 };
+
+// ================= CALCULATE AND UPDATE PENALTY =================
+export const calculateAndUpdatePenalty = async (booking) => {
+  if (!booking || !booking.waitingStartedAt) return;
+
+  const now = new Date();
+  const waitingTimeSeconds = Math.floor((now - new Date(booking.waitingStartedAt)) / 1000);
+  const gracePeriodSeconds = booking.waitingLimit || 3600;
+
+  if (waitingTimeSeconds > gracePeriodSeconds) {
+    const excessSeconds = waitingTimeSeconds - gracePeriodSeconds;
+    const penaltyMinutes = Math.floor(excessSeconds / 60);
+    const penaltyRatePerMin = 2; // ₹2 per minute
+    const newPenalty = penaltyMinutes * penaltyRatePerMin;
+
+    if (newPenalty !== booking.penaltyApplied) {
+      booking.penaltyApplied = newPenalty;
+      // Recalculate total fare including penalty
+      booking.totalFare = (booking.fare || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
+      await booking.save();
+
+      // Emit update via socket
+      try {
+        const io = getIO();
+        const rooms = [booking.user.toString(), booking.driver.toString()];
+        rooms.forEach((room) => {
+          io.to(room).emit("penaltyApplied", {
+            bookingId: booking._id.toString(),
+            penaltyApplied: booking.penaltyApplied,
+            totalFare: booking.totalFare
+          });
+        });
+        serverLog(`[Penalty] Applied ₹${newPenalty} to booking ${booking._id}`);
+      } catch (socketError) {
+        serverLog(`[Penalty] Socket error: ${socketError.message}`);
+      }
+      return true;
+    }
+  }
+  return false;
+};
+
 
