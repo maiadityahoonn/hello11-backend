@@ -194,6 +194,13 @@ const bookingSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Indexes for faster history and status lookups
+bookingSchema.index({ user: 1, createdAt: -1 });
+bookingSchema.index({ driver: 1, createdAt: -1 });
+bookingSchema.index({ status: 1 });
+bookingSchema.index({ bookingType: 1, status: 1 });
+bookingSchema.index({ scheduledDate: 1 });
+
 bookingSchema.pre('validate', function() {
   if (this.vehicleType) {
     const vType = this.vehicleType.toLowerCase();

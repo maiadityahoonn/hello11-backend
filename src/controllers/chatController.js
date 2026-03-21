@@ -1,4 +1,6 @@
 import Chat from "../models/Chat.js";
+import Booking from "../models/Booking.js";
+import { sendPushNotification } from "../utils/notifications.js";
 
 // ================= GET CHAT HISTORY =================
 export const getChatHistory = async (req, res) => {
@@ -51,7 +53,6 @@ export const sendMessage = async (req, res) => {
         } catch (socketError) {
             console.error("Socket emit error in REST sendMessage:", socketError.message);
         }
-
         res.status(201).json({
             chat: {
                 id: chat._id,
@@ -60,6 +61,26 @@ export const sendMessage = async (req, res) => {
                 timestamp: chat.createdAt
             }
         });
+
+        // --- PUSH NOTIFICATIONS ---
+        // Find the booking and populate users to get push tokens
+        try {
+            const booking = await Booking.findById(bookingId).populate("user driver");
+            if (booking) {
+                const recipient = sender === "user" ? booking.driver : booking.user;
+                if (recipient && recipient.pushToken) {
+                    const title = sender === "user" ? "Message from Passenger" : "Message from Driver";
+                    sendPushNotification(
+                        recipient.pushToken,
+                        title,
+                        message,
+                        { type: "chat", bookingId }
+                    );
+                }
+            }
+        } catch (pushError) {
+            console.error("Error sending push notification in REST chat:", pushError.message);
+        }
     } catch (error) {
         res.status(500).json({
             message: "Failed to send message",

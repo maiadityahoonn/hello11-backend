@@ -1190,57 +1190,73 @@ export const getDriverHistory = async (req, res) => {
 export const getDriverEarnings = async (req, res) => {
   try {
     const { period = "week" } = req.query; // day, week, month, all
-
     let startDate = new Date();
+    startDate.setHours(0, 0, 0, 0);
+
+    const now = new Date();
+    
     switch (period) {
       case "day":
-        startDate.setHours(0, 0, 0, 0);
+        // Already at today 00:00
         break;
       case "week":
-        startDate.setDate(startDate.getDate() - 7);
+        startDate.setDate(now.getDate() - 7);
         break;
       case "month":
-        startDate.setMonth(startDate.getMonth() - 1);
+        startDate.setMonth(now.getMonth() - 1);
         break;
       case "all":
         startDate = new Date(0);
         break;
+      default:
+        startDate.setDate(now.getDate() - 7);
     }
 
-    const completedBookings = await Booking.find({
+    // Filtered bookings for the selected period
+    const periodBookings = await Booking.find({
+      driver: req.driverId,
+      status: "completed",
+      createdAt: { $gte: startDate }
+    });
+
+    // Lifetime bookings for the main balance (if needed)
+    const lifetimeBookings = await Booking.find({
       driver: req.driverId,
       status: "completed"
     });
 
-    const bookingTotal = (booking) =>
-      Number((booking.fare || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0));
+    const bookingFare = (booking) =>
+      (booking.fare?.totalFare || 0) + (booking.fare?.nightSurcharge || 0);
 
-    const totalEarnings = completedBookings.reduce((sum, booking) => sum + bookingTotal(booking), 0);
-    const totalTrips = completedBookings.length;
-    const averageFare = totalTrips > 0 ? totalEarnings / totalTrips : 0;
+    const periodEarnings = periodBookings.reduce((sum, booking) => sum + bookingFare(booking), 0);
+    const periodTrips = periodBookings.length;
+    const periodAvgFare = periodTrips > 0 ? (periodEarnings / periodTrips).toFixed(0) : 0;
+    
+    const lifetimeEarnings = lifetimeBookings.reduce((sum, booking) => sum + bookingFare(booking), 0);
 
-    // Calculate today's earnings
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayEarnings = completedBookings
-      .filter(booking => new Date(booking.createdAt) >= today)
-      .reduce((sum, booking) => sum + bookingTotal(booking), 0);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEarnings = periodBookings
+      .filter(b => b.createdAt >= todayStart)
+      .reduce((sum, booking) => sum + bookingFare(booking), 0);
 
-    // Fetch payouts/activities for selected period
+    // Filter payouts
     const payouts = await Payout.find({
       driver: req.driverId,
       createdAt: { $gte: startDate }
     }).sort({ createdAt: -1 });
+
 
     const driver = await Driver.findById(req.driverId);
     const onlineHours = Math.round(((driver.onlineTime || 0) / 60) * 10) / 10;
 
     res.json({
       earnings: {
-        totalEarnings,
-        totalTrips,
-        averageFare: Math.round(averageFare * 100) / 100,
+        totalEarnings: periodEarnings,
+        totalTrips: periodTrips,
+        averageFare: periodAvgFare,
         todayEarnings,
+        lifetimeBalance: lifetimeEarnings,
         onlineHours,
         period,
         activities: payouts.map(p => ({

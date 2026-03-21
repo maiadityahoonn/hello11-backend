@@ -34,7 +34,6 @@ export const getProfile = async (req, res) => {
 // ================= UPDATE USER PROFILE =================
 export const updateProfile = async (req, res) => {
   try {
-    
     const { name, mobile, email, gender } = req.body;
 
     // Check if mobile is being changed and if it's already taken
@@ -88,7 +87,19 @@ export const updateProfile = async (req, res) => {
 // ================= GET USER HISTORY =================
 export const getHistory = async (req, res) => {
   try {
-    const bookings = await Booking.find({ user: req.userId }).sort({ createdAt: -1 });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // Parallelize data fetching and count for speed
+    const [bookings, total] = await Promise.all([
+      Booking.find({ user: req.userId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Booking.countDocuments({ user: req.userId })
+    ]);
+
     const normalizedBookings = bookings.map((booking) => {
       const obj = booking.toObject();
       obj.totalFare = (obj.fare || 0) + (obj.returnTripFare || 0) + (obj.penaltyApplied || 0) + (obj.tollFee || 0);
@@ -96,7 +107,13 @@ export const getHistory = async (req, res) => {
     });
 
     res.json({
-      bookings: normalizedBookings || []
+      bookings: normalizedBookings || [],
+      pagination: {
+        total,
+        page,
+        limit,
+        pages: Math.ceil(total / limit)
+      }
     });
   } catch (error) {
     res.status(500).json({
@@ -146,6 +163,7 @@ export const changePassword = async (req, res) => {
     });
   }
 };
+
 // ================= SUBMIT REVIEW =================
 export const submitReview = async (req, res) => {
   try {

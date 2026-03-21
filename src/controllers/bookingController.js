@@ -241,16 +241,26 @@ export const getScheduledBookings = async (req, res) => {
 // ================= GET SCHEDULED RIDE HISTORY =================
 export const getScheduledHistory = async (req, res) => {
   try {
-    // Rides that were originally scheduled but have now moved past 'scheduled' status
-    const bookings = await Booking.find({
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const query = {
       user: req.userId,
       bookingType: "schedule",
-      status: { $nin: ["scheduled"] }   // everything except still-pending scheduled
-    })
-      .sort({ scheduledDate: -1 })      // Most recent first
-      .limit(50);
+      status: { $nin: ["scheduled"] }
+    };
 
-    res.json({ success: true, bookings });
+    // Parallelize for speed
+    const [bookings, total] = await Promise.all([
+      Booking.find(query)
+        .sort({ scheduledDate: -1 })
+        .skip(skip)
+        .limit(limit),
+      Booking.countDocuments(query)
+    ]);
+
+    res.json({ success: true, bookings, pagination: { total, page, limit, pages: Math.ceil(total / limit) } });
   } catch (error) {
     res.status(500).json({
       message: "Failed to fetch scheduled ride history",

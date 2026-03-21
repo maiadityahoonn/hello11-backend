@@ -1,6 +1,8 @@
 import { Server } from "socket.io";
 import { serverLog } from "./logger.js";
 import Chat from "../models/Chat.js";
+import Booking from "../models/Booking.js";
+import { sendPushNotification } from "./notifications.js";
 
 let io;
 
@@ -65,6 +67,22 @@ export const initSocket = (server) => {
                     timestamp: newChat.createdAt
                 });
                 serverLog(`[CHAT] Broadcasted msg to room: ${roomName}, Sender: ${sender}, ID: ${newChat._id}`);
+
+                // --- PUSH NOTIFICATIONS ---
+                // Find the booking and populate users to get push tokens
+                const booking = await Booking.findById(bookingId).populate("user driver");
+                if (booking) {
+                    const recipient = sender === "user" ? booking.driver : booking.user;
+                    if (recipient && recipient.pushToken) {
+                        const title = sender === "user" ? "Message from Passenger" : "Message from Driver";
+                        sendPushNotification(
+                            recipient.pushToken,
+                            title,
+                            message,
+                            { type: "chat", bookingId }
+                        );
+                    }
+                }
             } catch (err) {
                 serverLog(`[CHAT] DB Error saving chat: ${err.message}`);
             }
