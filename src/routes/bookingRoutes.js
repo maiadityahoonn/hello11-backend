@@ -1,5 +1,5 @@
 import express from "express";
-import { createBooking, getUserBookings, getScheduledBookings, getScheduledHistory, getBookingById, cancelBooking, getBookingStatus, startRide, completeRide, verifyPayment, acceptReturnOffer, startWaiting, updatePaymentChoice, requestPayment } from "../controllers/bookingController.js";
+import { createBooking, getActiveBooking, getUserBookings, getScheduledBookings, getScheduledHistory, getBookingById, cancelBooking, getBookingStatus, startRide, completeRide, verifyPayment, acceptReturnOffer, startWaiting, updatePaymentChoice, requestPayment } from "../controllers/bookingController.js";
 import { authenticate } from "../middleware/auth.js";
 
 import { cacheData } from "../middleware/cacheMiddleware.js";
@@ -10,7 +10,6 @@ const router = express.Router();
 router.use(authenticate);
 
 // Booking routes
-import { createBooking, getActiveBooking, getUserBookings, getScheduledBookings, getScheduledHistory, getBookingById, cancelBooking, getBookingStatus, startRide, completeRide, verifyPayment, acceptReturnOffer, startWaiting, updatePaymentChoice, requestPayment } from "../controllers/bookingController.js";
 // ...
 router.post("/", createBooking);
 router.get("/active", getActiveBooking);
