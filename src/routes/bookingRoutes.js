@@ -10,7 +10,10 @@ const router = express.Router();
 router.use(authenticate);
 
 // Booking routes
+import { createBooking, getActiveBooking, getUserBookings, getScheduledBookings, getScheduledHistory, getBookingById, cancelBooking, getBookingStatus, startRide, completeRide, verifyPayment, acceptReturnOffer, startWaiting, updatePaymentChoice, requestPayment } from "../controllers/bookingController.js";
+// ...
 router.post("/", createBooking);
+router.get("/active", getActiveBooking);
 router.get("/", cacheData(30), getUserBookings);
 router.get("/scheduled", cacheData(30), getScheduledBookings);
 router.get("/scheduled/history", cacheData(60), getScheduledHistory);

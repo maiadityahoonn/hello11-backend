@@ -1623,7 +1623,7 @@ export const getDriverDashboard = async (req, res) => {
     if (!currentBooking) {
       currentBooking = await Booking.findOne({
         driver: req.driverId,
-        status: { $in: ["accepted", "driver_assigned", "arrived", "started"] }
+        status: { $in: ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"] }
       }).sort({ createdAt: -1 }).populate("user", "name mobile");
 
       // If found via fallback, sync it to driver.currentBooking
