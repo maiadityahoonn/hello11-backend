@@ -91,14 +91,39 @@ export const getHistory = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    const { bookingType, rideType } = req.query;
+    console.log('[History Request] Query Raw:', req.query);
+    const query = { user: req.userId };
+
+    if (bookingType === 'now') {
+      query.bookingType = 'now';
+      query.status = { $ne: 'scheduled' };
+    } else if (bookingType === 'schedule') {
+      query.bookingType = 'schedule';
+      query.status = 'scheduled';
+    } else if (bookingType && bookingType !== 'all') {
+      query.bookingType = bookingType;
+    }
+
+    if (rideType && rideType !== 'all') {
+      query.rideType = rideType;
+    }
+
+    console.log('[History Mongo Query]:', JSON.stringify(query));
+
+    console.log('[History] Filter params:', { bookingType, rideType });
+    console.log('[History] Mongo Query:', query);
+
     // Parallelize data fetching and count for speed
     const [bookings, total] = await Promise.all([
-      Booking.find({ user: req.userId })
+      Booking.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      Booking.countDocuments({ user: req.userId })
+      Booking.countDocuments(query)
     ]);
+
+    console.log(`[History] Found ${bookings.length} rides for query`);
 
     const normalizedBookings = bookings.map((booking) => {
       const obj = booking.toObject();

@@ -214,7 +214,7 @@ bookingSchema.index({ user: 1, rideType: 1, createdAt: -1 });
 // For payment status filtering
 bookingSchema.index({ user: 1, paymentStatus: 1, createdAt: -1 });
 // For date range queries
-bookingSchema.index({ user: 1, createdAt: -1 });
+// bookingSchema.index({ user: 1, createdAt: -1 }); // Duplicate of line 199
 
 bookingSchema.pre('validate', function() {
   if (this.vehicleType) {

@@ -13,7 +13,7 @@ router.use(authenticate);
 router.get("/profile", cacheData(60), getProfile);
 router.put("/profile", updateProfile);
 router.put("/password", changePassword);
-router.get("/history", cacheData(30), getHistory);
+router.get("/history", getHistory);
 router.post("/rate-driver", submitReview);
 
 export default router;
