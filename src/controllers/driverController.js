@@ -1260,8 +1260,6 @@ export const getDriverEarnings = async (req, res) => {
       createdAt: { $gte: startDate }
     }).sort({ createdAt: -1 });
 
-
-    const driver = await Driver.findById(req.driverId);
     const onlineHours = Math.round(((driver.onlineTime || 0) / 60) * 10) / 10;
 
     res.json({
