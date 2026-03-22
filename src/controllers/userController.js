@@ -6,13 +6,17 @@ import Booking from "../models/Booking.js";
 // ================= GET USER PROFILE =================
 export const getProfile = async (req, res) => {
   try {
+    const startTime = Date.now();
     const user = await User.findById(req.userId).select("-password");
 
     if (!user) {
+      console.log(`[Profile] Fetched in ${Date.now() - startTime}ms (User not found)`);
       return res.status(404).json({
         message: "User not found"
       });
     }
+
+    console.log(`[Profile] Fetched in ${Date.now() - startTime}ms for user ${req.userId}`);
 
     res.json({
       user: {

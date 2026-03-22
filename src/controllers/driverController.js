@@ -995,7 +995,7 @@ export const updateBookingStatus = async (req, res) => {
       if (!booking.fare || booking.fare === 0) {
         booking.fare = fare || 0;
       }
-      booking.totalFare = (booking.fare || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
+      booking.totalFare = (booking.fare || 0) + (booking.nightSurcharge || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
       booking.distance = distance || booking.distance || 0;
       booking.paymentStatus = booking.paymentStatus === "paid" ? "paid" : "pending";
 
@@ -1213,32 +1213,46 @@ export const getDriverEarnings = async (req, res) => {
     }
 
     // Filtered bookings for the selected period
-    const periodBookings = await Booking.find({
-      driver: req.driverId,
-      status: "completed",
-      createdAt: { $gte: startDate }
-    });
-
-    // Lifetime bookings for the main balance (if needed)
-    const lifetimeBookings = await Booking.find({
+    const query = {
       driver: req.driverId,
       status: "completed"
-    });
+    };
+    if (period !== "all") {
+      query.createdAt = { $gte: startDate };
+    }
 
-    const bookingFare = (booking) =>
-      (booking.fare?.totalFare || 0) + (booking.fare?.nightSurcharge || 0);
+    const periodBookings = await Booking.find(query);
+
+    const bookingFare = (booking) => {
+      // Use totalFare if already calculated, otherwise sum components
+      if (booking.totalFare && booking.totalFare > 0) return booking.totalFare;
+      return (Number(booking.fare) || 0) + 
+             (Number(booking.nightSurcharge) || 0) + 
+             (Number(booking.returnTripFare) || 0) + 
+             (Number(booking.penaltyApplied) || 0) + 
+             (Number(booking.tollFee) || 0);
+    };
 
     const periodEarnings = periodBookings.reduce((sum, booking) => sum + bookingFare(booking), 0);
     const periodTrips = periodBookings.length;
     const periodAvgFare = periodTrips > 0 ? (periodEarnings / periodTrips).toFixed(0) : 0;
     
-    const lifetimeEarnings = lifetimeBookings.reduce((sum, booking) => sum + bookingFare(booking), 0);
+    // Get driver for lifetime balance and online time
+    const driver = await Driver.findById(req.driverId);
+    if (!driver) {
+      return res.status(404).json({ message: "Driver not found" });
+    }
+
+    const lifetimeEarnings = driver.totalEarnings || 0;
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
+    
+    // Calculate today's earnings from periodBookings if possible (more efficient if period is week/month)
     const todayEarnings = periodBookings
       .filter(b => b.createdAt >= todayStart)
       .reduce((sum, booking) => sum + bookingFare(booking), 0);
+
 
     // Filter payouts
     const payouts = await Payout.find({
@@ -1452,7 +1466,7 @@ export const completeRide = async (req, res) => {
     if (!booking.fare || booking.fare === 0) {
       booking.fare = fare || 0;
     }
-    booking.totalFare = (booking.fare || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
+    booking.totalFare = (booking.fare || 0) + (booking.nightSurcharge || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
     booking.distance = distance || booking.distance || 0;
     booking.paymentStatus = booking.paymentStatus === "paid" ? "paid" : "pending";
     booking.rideCompletedAt = new Date();
@@ -1613,7 +1627,7 @@ export const getDriverDashboard = async (req, res) => {
       createdAt: { $gte: today }
     });
     const todayEarnings = todayBookings.reduce(
-      (sum, b) => sum + Number((b.fare || 0) + (b.returnTripFare || 0) + (b.penaltyApplied || 0) + (b.tollFee || 0)),
+      (sum, b) => sum + Number((b.fare || 0) + (b.nightSurcharge || 0) + (b.returnTripFare || 0) + (b.penaltyApplied || 0) + (b.tollFee || 0)),
       0
     );
 
@@ -1659,7 +1673,7 @@ export const getDriverDashboard = async (req, res) => {
       {
         $project: {
           effectiveTotal: {
-            $add: ["$fare", { $ifNull: ["$returnTripFare", 0] }, { $ifNull: ["$penaltyApplied", 0] }, { $ifNull: ["$tollFee", 0] }]
+            $add: ["$fare", { $ifNull: ["$nightSurcharge", 0] }, { $ifNull: ["$returnTripFare", 0] }, { $ifNull: ["$penaltyApplied", 0] }, { $ifNull: ["$tollFee", 0] }]
           }
         }
       },
