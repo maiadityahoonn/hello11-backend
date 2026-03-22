@@ -203,11 +203,72 @@ export const createBooking = async (req, res) => {
 // ================= GET USER BOOKINGS =================
 export const getUserBookings = async (req, res) => {
   try {
-    const bookings = await Booking.find({ user: req.userId })
-      .sort({ createdAt: -1 });
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    const { bookingType, status, rideType, paymentStatus, startDate, endDate } = req.query;
+
+    console.log('[getUserBookings] Input params:', { bookingType, status, rideType, paymentStatus });
+
+    // Build filter query
+    const query = { user: req.userId };
+    
+    // Handle bookingType filtering with automatic status filtering
+    if (bookingType === "schedule") {
+      query.bookingType = "schedule";
+      query.status = "scheduled";  // Scheduled rides must have status "scheduled"
+    } else if (bookingType === "now") {
+      query.bookingType = "now";
+      // For "now" rides, exclude the "scheduled" status - show only completed, cancelled, accepted, etc.
+      query.status = { $ne: "scheduled" };
+    } else if (bookingType) {
+      query.bookingType = bookingType;
+    }
+    
+    // Override with explicit status if provided in query
+    if (status) {
+      query.status = status;
+    }
+    
+    // IMPORTANT: rideType filter - apply only if not empty string
+    if (rideType && rideType !== "all") {
+      console.log('[getUserBookings] Filtering by rideType:', rideType);
+      query.rideType = rideType;
+    } else {
+      console.log('[getUserBookings] No rideType filter (all rides selected)');
+    }
+    
+    if (paymentStatus) {
+      query.paymentStatus = paymentStatus;
+    }
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) query.createdAt.$gte = new Date(startDate);
+      if (endDate) query.createdAt.$lte = new Date(endDate);
+    }
+
+    console.log('[getUserBookings] Final query filter:', JSON.stringify(query));
+
+    // Parallelize count and data fetch for speed
+    // Sort by scheduledDate for scheduled rides, createdAt for now rides
+    const sortOrder = bookingType === "schedule" ? { scheduledDate: 1 } : { createdAt: -1 };
+    
+    const [bookings, total] = await Promise.all([
+      Booking.find(query)
+        .select('pickupLocation dropLocation fare status rideType paymentStatus createdAt distance driver rating vehicleType totalFare scheduledDate bookingType')
+        .sort(sortOrder)
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Booking.countDocuments(query)
+    ]);
+
+    console.log(`[getUserBookings] Found ${bookings.length} bookings. Ride types:`, bookings.map(b => b.rideType));
 
     res.json({
-      bookings
+      success: true,
+      bookings,
+      pagination: { total, page, limit, pages: Math.ceil(total / limit) }
     });
   } catch (error) {
     res.status(500).json({
@@ -225,7 +286,10 @@ export const getScheduledBookings = async (req, res) => {
       user: req.userId,
       status: "scheduled"
       // No date filter — show all scheduled regardless of time
-    }).sort({ scheduledDate: 1 });
+    })
+      .select('pickupLocation dropLocation fare status rideType vehicleType scheduledDate distance')
+      .sort({ scheduledDate: 1 })
+      .lean();
 
     console.log('[getScheduledBookings] found:', bookings.length);
     res.json({ success: true, bookings });
@@ -244,6 +308,7 @@ export const getScheduledHistory = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
+    const { status, rideType, paymentStatus, startDate, endDate } = req.query;
 
     const query = {
       user: req.userId,
@@ -251,12 +316,30 @@ export const getScheduledHistory = async (req, res) => {
       status: { $nin: ["scheduled"] }
     };
 
+    // Add optional filters
+    if (status && status !== "all") {
+      query.status = status;
+    }
+    if (rideType && rideType !== "all") {
+      query.rideType = rideType;
+    }
+    if (paymentStatus && paymentStatus !== "all") {
+      query.paymentStatus = paymentStatus;
+    }
+    if (startDate || endDate) {
+      query.scheduledDate = {};
+      if (startDate) query.scheduledDate.$gte = new Date(startDate);
+      if (endDate) query.scheduledDate.$lte = new Date(endDate);
+    }
+
     // Parallelize for speed
     const [bookings, total] = await Promise.all([
       Booking.find(query)
+        .select('pickupLocation dropLocation fare status rideType paymentStatus scheduledDate createdAt distance driver rating vehicleType totalFare')
         .sort({ scheduledDate: -1 })
         .skip(skip)
-        .limit(limit),
+        .limit(limit)
+        .lean(),
       Booking.countDocuments(query)
     ]);
 

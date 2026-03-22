@@ -32,4 +32,7 @@ const notificationSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
+// Performance: index user for quick fetch in notifications list
+notificationSchema.index({ user: 1, createdAt: -1 });
+
 export default mongoose.model("Notification", notificationSchema);

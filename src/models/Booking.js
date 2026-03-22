@@ -195,11 +195,26 @@ const bookingSchema = new mongoose.Schema(
 );
 
 // Indexes for faster history and status lookups
+// Single field indexes
 bookingSchema.index({ user: 1, createdAt: -1 });
 bookingSchema.index({ driver: 1, createdAt: -1 });
 bookingSchema.index({ status: 1 });
-bookingSchema.index({ bookingType: 1, status: 1 });
+bookingSchema.index({ paymentStatus: 1 });
+bookingSchema.index({ rideType: 1 });
+bookingSchema.index({ bookingType: 1 });
 bookingSchema.index({ scheduledDate: 1 });
+
+// Compound indexes for optimized queries
+// For scheduled history filtering (most common)
+bookingSchema.index({ user: 1, bookingType: 1, status: 1, scheduledDate: -1 });
+// For now/instant booking history
+bookingSchema.index({ user: 1, bookingType: 1, createdAt: -1, status: 1 });
+// For filtering by ride type within history
+bookingSchema.index({ user: 1, rideType: 1, createdAt: -1 });
+// For payment status filtering
+bookingSchema.index({ user: 1, paymentStatus: 1, createdAt: -1 });
+// For date range queries
+bookingSchema.index({ user: 1, createdAt: -1 });
 
 bookingSchema.pre('validate', function() {
   if (this.vehicleType) {
