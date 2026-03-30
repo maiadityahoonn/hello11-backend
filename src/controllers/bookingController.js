@@ -20,8 +20,8 @@ export const getActiveBooking = async (req, res) => {
       user: req.userId,
       status: { $in: ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"] }
     })
-    .populate("user", "name mobile profileImage")
-    .populate("driver", "name vehicleModel vehicleNumber rating profileImage mobile latitude longitude");
+      .populate("user", "name mobile profileImage")
+      .populate("driver", "name vehicleModel vehicleNumber rating profileImage mobile latitude longitude");
 
     if (!booking) {
       return res.json({ success: true, booking: null });
@@ -159,7 +159,7 @@ export const createBooking = async (req, res) => {
               driver.pushToken,
               "New Ride Request",
               `${booking.rideType === 'outstation' ? 'Outstation' : 'Local'} ride from ${pickupLocation} to ${dropLocation}. Fare: ₹${booking.fare}`,
-              { 
+              {
                 bookingId: booking._id.toString(),
                 type: 'new_ride'
               }
@@ -212,7 +212,7 @@ export const getUserBookings = async (req, res) => {
 
     // Build filter query
     const query = { user: req.userId };
-    
+
     // Handle bookingType filtering with automatic status filtering
     if (bookingType === "schedule") {
       query.bookingType = "schedule";
@@ -224,12 +224,12 @@ export const getUserBookings = async (req, res) => {
     } else if (bookingType) {
       query.bookingType = bookingType;
     }
-    
+
     // Override with explicit status if provided in query
     if (status) {
       query.status = status;
     }
-    
+
     // IMPORTANT: rideType filter - apply only if not empty string
     if (rideType && rideType !== "all") {
       console.log('[getUserBookings] Filtering by rideType:', rideType);
@@ -237,7 +237,7 @@ export const getUserBookings = async (req, res) => {
     } else {
       console.log('[getUserBookings] No rideType filter (all rides selected)');
     }
-    
+
     if (paymentStatus) {
       query.paymentStatus = paymentStatus;
     }
@@ -252,7 +252,7 @@ export const getUserBookings = async (req, res) => {
     // Parallelize count and data fetch for speed
     // Sort by scheduledDate for scheduled rides, createdAt for now rides
     const sortOrder = bookingType === "schedule" ? { scheduledDate: 1 } : { createdAt: -1 };
-    
+
     const [bookings, total] = await Promise.all([
       Booking.find(query)
         .select('pickupLocation dropLocation fare status rideType paymentStatus createdAt distance driver rating vehicleType totalFare scheduledDate bookingType')
@@ -498,10 +498,10 @@ export const getBookingStatus = async (req, res) => {
 
     // Dynamic penalty calculation if waiting started
     if (booking.waitingStartedAt) {
-       const { calculateAndUpdatePenalty } = await import("./driverController.js").catch(() => ({}));
-       if (typeof calculateAndUpdatePenalty === 'function') {
-         await calculateAndUpdatePenalty(booking);
-       }
+      const { calculateAndUpdatePenalty } = await import("./driverController.js").catch(() => ({}));
+      if (typeof calculateAndUpdatePenalty === 'function') {
+        await calculateAndUpdatePenalty(booking);
+      }
     }
 
     // Always expose computed trip total for consistency in tracking/details
@@ -691,7 +691,7 @@ export const updatePaymentChoice = async (req, res) => {
     }
 
     booking.paymentChoice = paymentChoice;
-    
+
     // If user chooses total_at_end for an outstation trip, we can proceed to waiting
     if (paymentChoice === "total_at_end" && booking.rideType === "outstation") {
       booking.status = "waiting";
@@ -721,7 +721,7 @@ export const updatePaymentChoice = async (req, res) => {
           message: `Payment choice updated: ${paymentChoice}`
         });
       }
-    } catch (err) {}
+    } catch (err) { }
 
   } catch (error) {
     res.status(500).json({ message: "Failed to update payment choice", error: error.message });
@@ -885,16 +885,16 @@ export const startWaiting = async (req, res) => {
 
     // Logic: Split payment check
     if (booking.rideType === "normal" && !booking.firstLegPaid) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: "Payment for the first leg is required before starting the waiting timer for normal trips.",
-        requiresPayment: true 
+        requiresPayment: true
       });
     }
 
     if (booking.rideType === "outstation" && booking.paymentChoice === "leg_by_leg" && !booking.firstLegPaid) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         message: "Confirmation required: Collect payment or choose 'Total at end' for outstation return.",
-        requiresChoice: true 
+        requiresChoice: true
       });
     }
 

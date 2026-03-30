@@ -4,6 +4,21 @@ import { serverLog } from "../utils/logger.js";
 const GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api";
 const getGoogleApiKey = () => process.env.GOOGLE_MAPS_API_KEY;
 
+// Calculate distance between two points (Haversine formula) - shared helper
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371; // Earth's radius in km
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+    Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLon / 2) *
+    Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Distance in km
+};
+
 // Forward Geocoding: Convert address to coordinates
 export const geocodeAddress = async (req, res) => {
   try {
@@ -154,67 +169,135 @@ export const getDirections = async (req, res) => {
   }
 };
 
-// Get autocomplete suggestions for address
+// Get autocomplete suggestions for address input fields
+// Uses Google Places Autocomplete API — prefix matching, India-restricted, 50km proximity-biased
 export const getAutocomplete = async (req, res) => {
   try {
-    const { query } = req.query;
+    const { query, lat, lon } = req.query;
     if (!query) return res.status(400).json({ error: "Query is required" });
 
-    // Using Google Places Text Search to get coordinates directly
-    const url = `${GOOGLE_MAPS_API_URL}/place/textsearch/json`;
-    serverLog(`API CALL: Autocomplete (TextSearch) -> ${url}?query=${query}&key=...`);
-    const response = await axios.get(url, {
-      params: { query: query, key: getGoogleApiKey() }
+    const userLat = lat ? parseFloat(lat) : null;
+    const userLon = lon ? parseFloat(lon) : null;
+    const hasCoords = userLat !== null && userLon !== null && !isNaN(userLat) && !isNaN(userLon);
+
+    // ── Google Places Autocomplete API ─────────────────────────────────────
+    // This is the right API for address input fields:
+    //   • Prefix matching: "Bhop" → Bhopal, "Del" → Delhi
+    //   • components=country:in restricts to India at the API level
+    //   • location+radius provides soft 50km proximity recommendation
+    const autocompleteParams = {
+      input: query,
+      key: getGoogleApiKey(),
+      components: "country:in",  // Hard-restrict to India at API level
+      language: "en",
+      types: "geocode",          // Addresses + geographic places (not just businesses)
+    };
+
+    if (hasCoords) {
+      autocompleteParams.location = `${userLat},${userLon}`;
+      autocompleteParams.radius = 50000;      // 50km soft proximity bias
+      autocompleteParams.strictbounds = false; // Nearby first, but don't cut off distant places
+    }
+
+    serverLog(`API CALL: Autocomplete -> /place/autocomplete/json?input=${query}&key=...`);
+    const acResponse = await axios.get(`${GOOGLE_MAPS_API_URL}/place/autocomplete/json`, {
+      params: autocompleteParams,
     });
 
-    if (response.data && response.data.status === "OK") {
-      const suggestions = response.data.results.map((place) => {
-        return {
-          place_id: place.place_id,
-          display_name: place.formatted_address || place.name,
-          lat: place.geometry.location.lat.toString(),
-          lon: place.geometry.location.lng.toString(),
-        };
-      });
-      res.json({ success: true, data: suggestions });
-    } else {
-      const status = response.data ? response.data.status : "UNKNOWN";
-      const errMsg = response.data ? response.data.error_message : "";
+    if (acResponse.data && acResponse.data.status === "OK") {
+      const predictions = acResponse.data.predictions || [];
 
-      if (status !== "ZERO_RESULTS") {
-        serverLog(`GOOGLE ERROR [Autocomplete/TextSearch]: Status: ${status}, Message: ${errMsg}`);
-        if (response.data) serverLog(`FULL RESPONSE: ${JSON.stringify(response.data)}`);
-        serverLog("Attempting fallback to Photon (OSM)...");
-      }
-
-      // --- FALLBACK TO PHOTON (OSM) ---
-      try {
-        const photonRes = await axios.get(`https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=10`);
-        if (photonRes.data && photonRes.data.features) {
-          const suggestions = photonRes.data.features.map((f) => {
-            const props = f.properties;
-            const parts = [props.name, props.city, props.state, props.country].filter(Boolean);
+      // Fetch coordinates for each prediction via Place Details
+      const suggestions = await Promise.all(
+        predictions.slice(0, 7).map(async (pred) => {
+          try {
+            const detailRes = await axios.get(`${GOOGLE_MAPS_API_URL}/place/details/json`, {
+              params: {
+                place_id: pred.place_id,
+                key: getGoogleApiKey(),
+                fields: "geometry,formatted_address",
+              },
+            });
+            const result = detailRes.data.result;
             return {
-              place_id: f.properties.osm_id || Math.random().toString(),
-              display_name: parts.join(", "),
-              lat: f.geometry.coordinates[1].toString(),
-              lon: f.geometry.coordinates[0].toString(),
+              place_id: pred.place_id,
+              display_name: pred.description,
+              lat: result?.geometry?.location?.lat?.toString() || "",
+              lon: result?.geometry?.location?.lng?.toString() || "",
             };
-          });
-          serverLog(`Photon fallback successful: found ${suggestions.length} results`);
-          return res.json({ success: true, data: suggestions });
-        }
-      } catch (photonErr) {
-        serverLog(`Photon fallback also failed: ${photonErr.message}`);
+          } catch {
+            return { place_id: pred.place_id, display_name: pred.description, lat: "", lon: "" };
+          }
+        })
+      );
+
+      const valid = suggestions.filter((s) => s.lat && s.lon);
+      serverLog(`Google Autocomplete: ${valid.length} results for "${query}"`);
+      return res.json({ success: true, data: valid });
+    }
+
+    // ── Fallback: Photon (OSM) ──────────────────────────────────────────────
+    const status = acResponse.data ? acResponse.data.status : "UNKNOWN";
+    const errMsg = acResponse.data ? acResponse.data.error_message : "";
+
+    if (status !== "ZERO_RESULTS") {
+      serverLog(`GOOGLE Autocomplete ERROR: Status: ${status}, Message: ${errMsg}`);
+      serverLog("Falling back to Photon (OSM)...");
+    }
+
+    try {
+      // Wide bbox (~250km) so distant cities still appear — Photon ranks centre results higher
+      let photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=15&lang=en`;
+
+      if (hasCoords) {
+        const delta = 2.25; // ≈ 250km wide bounding box
+        photonUrl += `&bbox=${[
+          userLon - delta, // west
+          userLat - delta, // south
+          userLon + delta, // east
+          userLat + delta, // north
+        ].join(",")}`;
       }
 
-      res.json({
-        success: true,
-        data: [],
-        google_status: status,
-        message: errMsg
-      });
+      const photonRes = await axios.get(photonUrl);
+
+      if (photonRes.data && photonRes.data.features) {
+        let features = photonRes.data.features;
+
+        // Hard-filter: India only
+        features = features.filter((f) => {
+          const cc = (f.properties.country_code || "").toLowerCase();
+          const country = (f.properties.country || "").toLowerCase();
+          return cc === "in" || country === "india";
+        });
+
+        // Sort nearest-first (50km = recommendation, not a hard cut-off)
+        if (hasCoords) {
+          features.sort((a, b) => {
+            const dA = calculateDistance(userLat, userLon, a.geometry.coordinates[1], a.geometry.coordinates[0]);
+            const dB = calculateDistance(userLat, userLon, b.geometry.coordinates[1], b.geometry.coordinates[0]);
+            return dA - dB;
+          });
+        }
+
+        const suggestions = features.map((f) => {
+          const p = f.properties;
+          return {
+            place_id: p.osm_id ? String(p.osm_id) : Math.random().toString(),
+            display_name: [p.name, p.street, p.city, p.state, p.country].filter(Boolean).join(", "),
+            lat: f.geometry.coordinates[1].toString(),
+            lon: f.geometry.coordinates[0].toString(),
+          };
+        });
+
+        serverLog(`Photon fallback: ${suggestions.length} India results for "${query}"`);
+        return res.json({ success: true, data: suggestions });
+      }
+    } catch (photonErr) {
+      serverLog(`Photon fallback failed: ${photonErr.message}`);
     }
+
+    res.json({ success: true, data: [], google_status: status, message: errMsg });
   } catch (error) {
     serverLog(`Autocomplete error: ${error.message}`);
     res.status(500).json({ error: "Failed to get autocomplete suggestions" });
@@ -252,20 +335,7 @@ const decodePolyline = (encoded) => {
   return points;
 };
 
-// Calculate distance between two points (Haversine formula) - Helper
-const calculateDistance = (lat1, lon1, lat2, lon2) => {
-  const R = 6371; // Earth's radius in km
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLon = ((lon2 - lon1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat1 * Math.PI) / 180) *
-    Math.cos((lat2 * Math.PI) / 180) *
-    Math.sin(dLon / 2) *
-    Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c; // Distance in km
-};
+// NOTE: calculateDistance is defined at the top of this file
 
 // Get LocationIQ API key status (Mocked for Photon now)
 export const getApiKeyStatus = (req, res) => {
