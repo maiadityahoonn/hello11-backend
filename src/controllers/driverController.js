@@ -279,6 +279,8 @@ export const getDriverProfile = async (req, res) => {
         experienceYears: driver.experienceYears,
         vehicleColor: driver.vehicleColor,
         profileImage: driver.profileImage || "",
+        isVerified: driver.isVerified || false,
+        verificationNote: driver.verificationNote || "",
         documents: driver.documents,
         stats: {
           totalBookings: completedBookings + cancelledBookings,
@@ -1715,6 +1717,8 @@ export const getDriverDashboard = async (req, res) => {
           rating: Math.round(avgRatingDash * 10) / 10,
           available: driver.available,
           online: driver.online || false,
+          isVerified: driver.isVerified || false,
+          verificationNote: driver.verificationNote || "",
           vehicleType: driver.vehicleType,
           serviceType: driver.serviceType,
           profileImage: driver.profileImage || ""
