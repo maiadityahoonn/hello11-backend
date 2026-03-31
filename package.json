@@ -19,6 +19,7 @@
     "dotenv": "^17.2.3",
     "expo-server-sdk": "^6.1.0",
     "express": "^5.2.1",
+    "imagekit": "^6.0.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.5",
     "node-cron": "^4.2.1",

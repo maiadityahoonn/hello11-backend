@@ -10,6 +10,7 @@ import { serverLog } from "../utils/logger.js";
 import { getIO } from "../utils/socketLogic.js";
 
 import { sendPushNotification } from "../utils/notifications.js";
+import { uploadToImageKit } from "../utils/imagekit.js";
 
 // ================= GENERATE JWT TOKEN FOR DRIVER =================
 const generateDriverToken = (driverId) => {
@@ -407,9 +408,29 @@ export const updateDocuments = async (req, res) => {
     const { license, insurance, registration } = req.body;
     const updateData = {};
 
-    if (license !== undefined) updateData['documents.license'] = license;
-    if (insurance !== undefined) updateData['documents.insurance'] = insurance;
-    if (registration !== undefined) updateData['documents.registration'] = registration;
+    // Helper to handle base64 uploads
+    const handleDocumentUpload = async (docData, fieldName) => {
+      if (!docData) return;
+      
+      // If it's already a URL, skip upload
+      if (docData.startsWith('http')) {
+        updateData[`documents.${fieldName}`] = docData;
+        return;
+      }
+      
+      // If it's base64, upload to ImageKit
+      if (docData.startsWith('data:')) {
+        const fileName = `${fieldName}_${req.driverId}_${Date.now()}.jpg`;
+        const uploadResponse = await uploadToImageKit(docData, fileName, "/documents");
+        updateData[`documents.${fieldName}`] = uploadResponse.url;
+      }
+    };
+
+    await Promise.all([
+      handleDocumentUpload(license, 'license'),
+      handleDocumentUpload(insurance, 'insurance'),
+      handleDocumentUpload(registration, 'registration')
+    ]);
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ message: "No document data provided" });
@@ -1820,12 +1841,19 @@ export const requestPayout = async (req, res) => {
 // ================= UPDATE PROFILE IMAGE =================
 export const updateProfileImage = async (req, res) => {
   try {
-    const { profileImage } = req.body;
+    let { profileImage } = req.body;
 
     if (!profileImage) {
       return res.status(400).json({
         message: "Profile image is required"
       });
+    }
+
+    // If it's a base64 string, upload to ImageKit
+    if (profileImage.startsWith('data:')) {
+      const fileName = `profile_${req.driverId}_${Date.now()}.jpg`;
+      const uploadResponse = await uploadToImageKit(profileImage, fileName, "/profile_images");
+      profileImage = uploadResponse.url;
     }
 
     const driver = await Driver.findByIdAndUpdate(

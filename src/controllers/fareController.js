@@ -243,12 +243,17 @@ export const calculateTripFare = (req, res) => {
     } = req.body;
 
     // ── Validate inputs ────────────────────────────────────────────────────
-    const distance = parseFloat(rawDistance);
-    if (isNaN(distance) || distance < 1) {
+    let distance = parseFloat(rawDistance);
+    if (isNaN(distance) || distance <= 0) {
       return res.status(400).json({
         success: false,
-        error: "distance must be a number ≥ 1 KM.",
+        error: "distance must be a number > 0 KM.",
       });
+    }
+
+    // If distance is less than 1 KM, charge for 1 KM (minimum fare)
+    if (distance < 1) {
+      distance = 1;
     }
 
     const validCarTypes = ["5seater", "7seater"];

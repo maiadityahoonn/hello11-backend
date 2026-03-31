@@ -58,7 +58,7 @@ router.post("/reset-password", resetPassword);
 // ================= PROTECTED ROUTES (Require Authentication) =================
 
 // GET /api/drivers/profile - Get driver profile
-router.get("/profile", authenticateDriver, cacheData(15), getDriverProfile);
+router.get("/profile", authenticateDriver, getDriverProfile);
 
 // PUT /api/drivers/profile - Update driver profile
 router.put("/profile", authenticateDriver, updateDriverProfile);
@@ -121,7 +121,7 @@ router.get("/earnings", authenticateDriver, getDriverEarnings);
 router.get("/reviews", authenticateDriver, getDriverReviews);
 
 // GET /api/drivers/dashboard - Get driver dashboard stats
-router.get("/dashboard", authenticateDriver, cacheData(15), getDriverDashboard);
+router.get("/dashboard", authenticateDriver, getDriverDashboard);
 
 // PUT /api/drivers/password - Change password
 router.put("/password", authenticateDriver, changePassword);
