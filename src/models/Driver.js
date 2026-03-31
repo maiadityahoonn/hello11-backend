@@ -96,6 +96,10 @@ const driverSchema = new mongoose.Schema(
       type: Boolean,
       default: false
     },
+    verificationNote: {
+      type: String,
+      default: ""
+    },
     isApproved: {
       type: Boolean,
       default: true

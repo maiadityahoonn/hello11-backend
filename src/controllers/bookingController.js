@@ -119,6 +119,7 @@ export const createBooking = async (req, res) => {
         const query = {
           available: true,
           online: true,
+          isVerified: true,
           location: {
             $near: {
               $geometry: {

@@ -238,3 +238,38 @@ export const updateBookingStatus = async (req, res) => {
     });
   }
 };
+// ================= VERIFY DRIVER =================
+export const verifyDriver = async (req, res) => {
+  try {
+    const { isVerified, verificationNote } = req.body;
+    
+    // If being verified, clear previous rejection notes
+    const updateData = { isVerified };
+    if (isVerified) {
+      updateData.verificationNote = "";
+    } else if (verificationNote !== undefined) {
+      updateData.verificationNote = verificationNote;
+    }
+
+    const driver = await Driver.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true }
+    ).select("-password");
+
+    if (!driver) {
+      return res.status(404).json({ message: "Driver not found" });
+    }
+
+    res.json({ 
+      success: true, 
+      message: isVerified ? "Driver verified successfully" : "Driver verification updated", 
+      driver 
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to verify driver",
+      error: error.message
+    });
+  }
+};

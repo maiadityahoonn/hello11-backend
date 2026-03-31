@@ -838,8 +838,15 @@ export const acceptBooking = async (req, res) => {
       });
     }
 
-    // Prevent accepting if already has an active ride
+    // Prevent accepting if already has an active ride or not verified
     const driver = await Driver.findById(req.driverId);
+    
+    if (!driver.isVerified) {
+      return res.status(403).json({
+        message: "Your account is pending verification. You can accept rides once an admin approves your documents."
+      });
+    }
+
     if (driver.currentBooking) {
       const activeCheck = await Booking.findById(driver.currentBooking);
       if (activeCheck && !["completed", "cancelled"].includes(activeCheck.status)) {

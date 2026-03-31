@@ -6,6 +6,7 @@ import {
   getAllBookings,
   deleteUser,
   deleteDriver,
+  verifyDriver,
   updateBookingStatus
 } from "../controllers/adminController.js";
 
@@ -21,6 +22,7 @@ router.delete("/users/:id", deleteUser);
 // Drivers management
 router.get("/drivers", getAllDrivers);
 router.delete("/drivers/:id", deleteDriver);
+router.put("/drivers/:id/verify", verifyDriver);
 
 // Bookings management
 router.get("/bookings", getAllBookings);
