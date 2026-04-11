@@ -36,7 +36,15 @@ export const createOrder = async (req, res) => {
         res.json({
             success: true,
             order,
-            key_id: process.env.RAZORPAY_KEY_ID
+            key_id: process.env.RAZORPAY_KEY_ID,
+            // Backward-compatible aliases for older app builds
+            orderId: order.id,
+            amount: order.amount,
+            keyId: process.env.RAZORPAY_KEY_ID,
+            driver: {
+                name: driver.name || "",
+                mobile: driver.mobile || ""
+            }
         });
     } catch (error) {
         serverLog(`Razorpay Create Order Error: ${error.message}`);
