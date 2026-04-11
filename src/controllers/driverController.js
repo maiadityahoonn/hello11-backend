@@ -1373,21 +1373,27 @@ export const getDriverEarnings = async (req, res) => {
 
     const onlineHours = Math.round(((driver.onlineTime || 0) / 60) * 10) / 10;
 
-    const commissionRows = rideCommissions.map((booking) => ({
-      _id: booking._id,
-      pickupLocation: booking.pickupLocation,
-      dropLocation: booking.dropLocation,
-      createdAt: booking.createdAt,
-      adminCommission: booking.adminCommission || 0,
-      fare: getOneWayFare(booking),
-      baseFare: booking.baseFare || 0,
-      nightSurcharge: booking.nightSurcharge || 0,
-      returnTripFare: booking.returnTripFare || 0,
-      penaltyApplied: booking.penaltyApplied || 0,
-      tollFee: booking.tollFee || 0,
-      hasReturnTrip: !!booking.hasReturnTrip,
-      totalFare: getBookingTotalFare(booking)
-    }));
+    const commissionRows = rideCommissions.map((booking) => {
+      const normalizedTotalFare = getBookingTotalFare(booking);
+      const normalizedAdminCommission = Math.round(normalizedTotalFare * 0.12);
+
+      return {
+        _id: booking._id,
+        pickupLocation: booking.pickupLocation,
+        dropLocation: booking.dropLocation,
+        createdAt: booking.createdAt,
+        // Always derive from normalized total fare to avoid legacy mismatches in UI.
+        adminCommission: normalizedAdminCommission,
+        fare: getOneWayFare(booking),
+        baseFare: booking.baseFare || 0,
+        nightSurcharge: booking.nightSurcharge || 0,
+        returnTripFare: booking.returnTripFare || 0,
+        penaltyApplied: booking.penaltyApplied || 0,
+        tollFee: booking.tollFee || 0,
+        hasReturnTrip: !!booking.hasReturnTrip,
+        totalFare: normalizedTotalFare
+      };
+    });
 
     res.json({
       earnings: {
