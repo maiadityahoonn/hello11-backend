@@ -115,13 +115,21 @@ export const createBooking = async (req, res) => {
       const io = getIO();
       try {
         serverLog(`BROADCAST: Searching for drivers | RideType: ${booking.rideType} | Vehicle: ${booking.vehicleType}`);
+        const maxDistanceMeters = booking.rideType === 'outstation' ? 20000 : 5000;
         const locationNear = {
           $near: {
             $geometry: {
               type: "Point",
               coordinates: [booking.pickupLongitude, booking.pickupLatitude]
             },
-            $maxDistance: booking.rideType === 'outstation' ? 20000 : 5000
+            $maxDistance: maxDistanceMeters
+          }
+        };
+        // `$near` cannot be used in `countDocuments`; use `$geoWithin` for debug counts.
+        const radiusRadians = maxDistanceMeters / 6378137;
+        const locationWithin = {
+          $geoWithin: {
+            $centerSphere: [[booking.pickupLongitude, booking.pickupLatitude], radiusRadians]
           }
         };
 
@@ -129,18 +137,18 @@ export const createBooking = async (req, res) => {
         const [nearbyOnlineCount, nearbyAvailableCount, nearbyVerifiedCount] = await Promise.all([
           Driver.countDocuments({
             online: true,
-            location: locationNear
+            location: locationWithin
           }),
           Driver.countDocuments({
             online: true,
             available: true,
-            location: locationNear
+            location: locationWithin
           }),
           Driver.countDocuments({
             online: true,
             available: true,
             isVerified: true,
-            location: locationNear
+            location: locationWithin
           })
         ]);
 
