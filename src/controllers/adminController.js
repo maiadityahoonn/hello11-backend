@@ -3,6 +3,32 @@ import Driver from "../models/Driver.js";
 import Booking from "../models/Booking.js";
 import Transaction from "../models/Transaction.js";
 
+const getOneWayFare = (booking) => {
+  const fare = Number(booking?.fare || 0);
+  const baseFare = Number(booking?.baseFare || 0);
+  const nightSurcharge = Number(booking?.nightSurcharge || 0);
+
+  // Legacy guard: when baseFare was incorrectly saved equal to fare, fare already includes night.
+  if (baseFare > 0 && nightSurcharge > 0 && Math.abs(baseFare - fare) <= 1) {
+    return fare;
+  }
+
+  if (baseFare > 0) return baseFare + nightSurcharge;
+  return fare;
+};
+
+const getBookingTotalFare = (booking) => {
+  const explicitTotal = Number(booking?.totalFare || 0);
+  if (explicitTotal > 0) return explicitTotal;
+
+  return (
+    getOneWayFare(booking) +
+    Number(booking?.returnTripFare || 0) +
+    Number(booking?.penaltyApplied || 0) +
+    Number(booking?.tollFee || 0)
+  );
+};
+
 // ================= DASHBOARD STATS =================
 export const getDashboardStats = async (req, res) => {
   try {
@@ -184,9 +210,7 @@ export const getAllBookings = async (req, res) => {
 
     const normalizedBookings = bookings.map((b) => {
       const booking = b.toObject();
-      booking.totalFare =
-        (booking.totalFare ?? 0) ||
-        (booking.fare || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
+      booking.totalFare = getBookingTotalFare(booking);
       return booking;
     });
 
@@ -321,12 +345,24 @@ export const getFinancialReports = async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(100);
 
-    const rideCommissions = await Booking.find({ status: "completed", adminCommission: { $gt: 0 } })
+    const rideCommissionsRaw = await Booking.find({ status: "completed", adminCommission: { $gt: 0 } })
       .populate("driver", "name")
       .populate("user", "name")
-      .select('pickupLocation dropLocation totalFare fare adminCommission driverEarnings createdAt')
+      .select('pickupLocation dropLocation totalFare fare baseFare nightSurcharge returnTripFare penaltyApplied tollFee adminCommission driverEarnings createdAt')
       .sort({ createdAt: -1 })
       .limit(100);
+
+    const rideCommissions = rideCommissionsRaw.map((rideDoc) => {
+      const ride = rideDoc.toObject();
+      const totalFare = getBookingTotalFare(ride);
+      const adminCommission = Math.round(totalFare * 0.12);
+      return {
+        ...ride,
+        totalFare,
+        adminCommission,
+        driverEarnings: Number(ride.driverEarnings || (totalFare - adminCommission))
+      };
+    });
 
     res.json({
       transactions,

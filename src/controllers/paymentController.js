@@ -14,12 +14,25 @@ const razorpay = new Razorpay({
 // ================= CREATE ORDER =================
 export const createOrder = async (req, res) => {
     try {
+        const keyId = process.env.RAZORPAY_KEY_ID;
+        const keySecret = process.env.RAZORPAY_KEY_SECRET;
+        if (!keyId || !keySecret || keyId.includes("placeholder") || keySecret.includes("placeholder")) {
+            return res.status(500).json({
+                message: "Payment gateway is not configured. Please set Razorpay keys in server environment."
+            });
+        }
+
         const driver = await Driver.findById(req.driverId);
         if (!driver) {
             return res.status(404).json({ message: "Driver not found" });
         }
 
-        const amount = Math.round(driver.pendingCommission * 100); // Amount in paise
+        const pendingCommission = Number(driver.pendingCommission || 0);
+        if (!Number.isFinite(pendingCommission)) {
+            return res.status(400).json({ message: "Invalid pending commission amount for this account." });
+        }
+
+        const amount = Math.round(pendingCommission * 100); // Amount in paise
 
         if (amount <= 0) {
             return res.status(400).json({ message: "No pending commission to pay" });
@@ -36,11 +49,11 @@ export const createOrder = async (req, res) => {
         res.json({
             success: true,
             order,
-            key_id: process.env.RAZORPAY_KEY_ID,
+            key_id: keyId,
             // Backward-compatible aliases for older app builds
             orderId: order.id,
             amount: order.amount,
-            keyId: process.env.RAZORPAY_KEY_ID,
+            keyId,
             driver: {
                 name: driver.name || "",
                 mobile: driver.mobile || ""
@@ -48,7 +61,12 @@ export const createOrder = async (req, res) => {
         });
     } catch (error) {
         serverLog(`Razorpay Create Order Error: ${error.message}`);
-        res.status(500).json({ message: "Failed to create payment order", error: error.message });
+        const providerReason =
+            error?.error?.description ||
+            error?.description ||
+            error?.message ||
+            "Unknown payment gateway error";
+        res.status(500).json({ message: "Failed to create payment order", reason: providerReason });
     }
 };
 
