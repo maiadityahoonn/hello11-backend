@@ -189,6 +189,14 @@ const bookingSchema = new mongoose.Schema(
       type: String,
       enum: ["leg_by_leg", "total_at_end"],
       default: "leg_by_leg"
+    },
+    adminCommission: {
+      type: Number,
+      default: 0
+    },
+    driverEarnings: {
+      type: Number,
+      default: 0
     }
   },
   { timestamps: true }

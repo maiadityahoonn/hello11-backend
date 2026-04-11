@@ -133,6 +133,14 @@ const driverSchema = new mongoose.Schema(
     pushToken: {
       type: String,
       default: ""
+    },
+    pendingCommission: {
+      type: Number,
+      default: 0
+    },
+    unpaidRideCount: {
+      type: Number,
+      default: 0
     }
   },
   { timestamps: true }

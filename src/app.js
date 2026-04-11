@@ -10,6 +10,7 @@ import locationRoutes from "./routes/locationRoutes.js";
 import fareRoutes from "./routes/fareRoutes.js";
 import chatRoutes from "./routes/chatRoutes.js";
 import notificationRoutes from "./routes/notificationRoutes.js";
+import paymentRoutes from "./routes/paymentRoutes.js";
 
 const app = express();
 
@@ -28,6 +29,7 @@ app.use("/api/location", locationRoutes);
 app.use("/api/fare", fareRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/payments", paymentRoutes);
 
 // root test route
 app.get("/", (req, res) => {

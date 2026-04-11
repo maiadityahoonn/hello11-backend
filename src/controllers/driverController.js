@@ -849,6 +849,14 @@ export const acceptBooking = async (req, res) => {
       });
     }
 
+    if (driver.unpaidRideCount >= 3 && driver.pendingCommission > 0) {
+      return res.status(403).json({
+        message: "Aapka 3 rides ka commission pending hai. Kripya pahle payment karein.",
+        pendingCommission: driver.pendingCommission,
+        requiresPayment: true
+      });
+    }
+
     if (driver.currentBooking) {
       const activeCheck = await Booking.findById(driver.currentBooking);
       if (activeCheck && !["completed", "cancelled"].includes(activeCheck.status)) {
@@ -1219,27 +1227,36 @@ export const getDriverHistory = async (req, res) => {
 // ================= GET DRIVER EARNINGS =================
 export const getDriverEarnings = async (req, res) => {
   try {
-    const { period = "week" } = req.query; // day, week, month, all
+    const { period = "week", dateFrom, dateTo } = req.query;
     let startDate = new Date();
     startDate.setHours(0, 0, 0, 0);
+    let endDate = new Date();
+    endDate.setHours(23, 59, 59, 999);
 
     const now = new Date();
     
-    switch (period) {
-      case "day":
-        // Already at today 00:00
-        break;
-      case "week":
-        startDate.setDate(now.getDate() - 7);
-        break;
-      case "month":
-        startDate.setMonth(now.getMonth() - 1);
-        break;
-      case "all":
-        startDate = new Date(0);
-        break;
-      default:
-        startDate.setDate(now.getDate() - 7);
+    if (period === "custom" && dateFrom && dateTo) {
+      startDate = new Date(dateFrom);
+      startDate.setHours(0, 0, 0, 0);
+      endDate = new Date(dateTo);
+      endDate.setHours(23, 59, 59, 999);
+    } else {
+      switch (period) {
+        case "day":
+          // Today 00:00 to 23:59
+          break;
+        case "week":
+          startDate.setDate(now.getDate() - 7);
+          break;
+        case "month":
+          startDate.setMonth(now.getMonth() - 1);
+          break;
+        case "all":
+          startDate = new Date(0);
+          break;
+        default:
+          startDate.setDate(now.getDate() - 7);
+      }
     }
 
     // Filtered bookings for the selected period
@@ -1247,14 +1264,14 @@ export const getDriverEarnings = async (req, res) => {
       driver: req.driverId,
       status: "completed"
     };
+    
     if (period !== "all") {
-      query.createdAt = { $gte: startDate };
+      query.createdAt = { $gte: startDate, $lte: endDate };
     }
 
-    const periodBookings = await Booking.find(query);
+    const periodBookings = await Booking.find(query).sort({ createdAt: 1 });
 
     const bookingFare = (booking) => {
-      // Use totalFare if already calculated, otherwise sum components
       if (booking.totalFare && booking.totalFare > 0) return booking.totalFare;
       return (Number(booking.fare) || 0) + 
              (Number(booking.nightSurcharge) || 0) + 
@@ -1263,31 +1280,40 @@ export const getDriverEarnings = async (req, res) => {
              (Number(booking.tollFee) || 0);
     };
 
+    // Fetch all completed bookings for calendar dots to show lifetime history
+    const calendarQuery = {
+      driver: req.driverId,
+      status: "completed"
+    };
+    const calendarBookings = await Booking.find(calendarQuery).select('createdAt fare totalFare nightSurcharge returnTripFare penaltyApplied tollFee');
+    
+    const dailyStats = {};
+    calendarBookings.forEach(booking => {
+      const dateKey = booking.createdAt.toISOString().split('T')[0];
+      const fare = bookingFare(booking);
+      dailyStats[dateKey] = (dailyStats[dateKey] || 0) + fare;
+    });
+
     const periodEarnings = periodBookings.reduce((sum, booking) => sum + bookingFare(booking), 0);
     const periodTrips = periodBookings.length;
     const periodAvgFare = periodTrips > 0 ? (periodEarnings / periodTrips).toFixed(0) : 0;
     
-    // Get driver for lifetime balance and online time
     const driver = await Driver.findById(req.driverId);
     if (!driver) {
       return res.status(404).json({ message: "Driver not found" });
     }
 
-    const lifetimeEarnings = driver.totalEarnings || 0;
-
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     
-    // Calculate today's earnings from periodBookings if possible (more efficient if period is week/month)
     const todayEarnings = periodBookings
       .filter(b => b.createdAt >= todayStart)
       .reduce((sum, booking) => sum + bookingFare(booking), 0);
 
-
     // Filter payouts
     const payouts = await Payout.find({
       driver: req.driverId,
-      createdAt: { $gte: startDate }
+      createdAt: { $gte: startDate, $lte: endDate }
     }).sort({ createdAt: -1 });
 
     const onlineHours = Math.round(((driver.onlineTime || 0) / 60) * 10) / 10;
@@ -1298,9 +1324,10 @@ export const getDriverEarnings = async (req, res) => {
         totalTrips: periodTrips,
         averageFare: periodAvgFare,
         todayEarnings,
-        lifetimeBalance: lifetimeEarnings,
+        lifetimeBalance: driver.totalEarnings || 0,
         onlineHours,
         period,
+        dailyStats, // Added for calendar visualization
         activities: payouts.map(p => ({
           id: p._id,
           type: "payout",
@@ -1531,12 +1558,23 @@ export const completeRide = async (req, res) => {
       serverLog(`Socket notification error: ${socketError.message}`);
     }
 
-    // Make driver available again and update statistics
+    // Calculate 12% commission
+    const commissionRate = 0.12;
+    const adminCommission = Math.round((booking.totalFare || 0) * commissionRate);
+    const driverEarnings = (booking.totalFare || 0) - adminCommission;
+
+    booking.adminCommission = adminCommission;
+    booking.driverEarnings = driverEarnings;
+    await booking.save();
+
+    // Make driver available again and update statistics/debt
     await Driver.findByIdAndUpdate(req.driverId, {
       available: true,
       $inc: {
         totalTrips: 1,
-        totalEarnings: booking.totalFare || 0
+        totalEarnings: driverEarnings,
+        pendingCommission: adminCommission,
+        unpaidRideCount: 1
       }
     });
 

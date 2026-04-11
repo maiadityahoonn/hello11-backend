@@ -13,7 +13,7 @@ export const getDashboardStats = async (req, res) => {
     const completedTrips = await Booking.countDocuments({ status: "completed" });
     const cancelledTrips = await Booking.countDocuments({ status: "cancelled" });
 
-    // Calculate total earnings
+    // Calculate total earnings (Gross)
     const earningsResult = await Booking.aggregate([
       { $match: { status: "completed" } },
       {
@@ -32,6 +32,18 @@ export const getDashboardStats = async (req, res) => {
     ]);
     const totalEarnings = earningsResult.length > 0 ? earningsResult[0].total : 0;
 
+    // Commission stats
+    const commissionResult = await Booking.aggregate([
+      { $match: { status: "completed" } },
+      { $group: { _id: null, total: { $sum: { $ifNull: ["$adminCommission", 0] } } } }
+    ]);
+    const totalAdminCommission = commissionResult.length > 0 ? commissionResult[0].total : 0;
+
+    const pendingResult = await Driver.aggregate([
+      { $group: { _id: null, total: { $sum: { $ifNull: ["$pendingCommission", 0] } } } }
+    ]);
+    const totalPendingCommission = pendingResult.length > 0 ? pendingResult[0].total : 0;
+
     res.json({
       stats: {
         totalUsers,
@@ -41,7 +53,9 @@ export const getDashboardStats = async (req, res) => {
         ongoingTrips,
         completedTrips,
         cancelledTrips,
-        totalEarnings
+        totalEarnings,
+        totalAdminCommission,
+        totalPendingCommission
       }
     });
   } catch (error) {
@@ -182,6 +196,31 @@ export const getAllBookings = async (req, res) => {
       error: error.message
     });
   }
+};
+
+// ================= MANUAL PAYMENT RESET =================
+export const manualPaymentReset = async (req, res) => {
+    try {
+        const driver = await Driver.findById(req.params.id);
+        if (!driver) {
+            return res.status(404).json({ message: "Driver not found" });
+        }
+
+        driver.pendingCommission = 0;
+        driver.unpaidRideCount = 0;
+        await driver.save();
+
+        res.json({
+            success: true,
+            message: `Cleared dues for driver ${driver.name} successfully.`,
+            driver
+        });
+    } catch (error) {
+        res.status(500).json({
+            message: "Failed to reset driver commission",
+            error: error.message
+        });
+    }
 };
 
 // ================= DELETE USER =================

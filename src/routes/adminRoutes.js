@@ -7,7 +7,8 @@ import {
   deleteUser,
   deleteDriver,
   verifyDriver,
-  updateBookingStatus
+  updateBookingStatus,
+  manualPaymentReset
 } from "../controllers/adminController.js";
 
 const router = express.Router();
@@ -23,6 +24,7 @@ router.delete("/users/:id", deleteUser);
 router.get("/drivers", getAllDrivers);
 router.delete("/drivers/:id", deleteDriver);
 router.put("/drivers/:id/verify", verifyDriver);
+router.put("/drivers/:id/reset-commission", manualPaymentReset);
 
 // Bookings management
 router.get("/bookings", getAllBookings);
