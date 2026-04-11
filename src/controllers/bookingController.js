@@ -13,6 +13,26 @@ const TEST_WAITING_LIMIT_SECONDS = null;
 const resolveWaitingLimitSeconds = (distanceKm = 0) =>
   TEST_WAITING_LIMIT_SECONDS ?? (calcAllowedTime(distanceKm) * 60);
 
+const getOneWayFare = (booking) => {
+  const fare = Number(booking?.fare || 0);
+  const baseFare = Number(booking?.baseFare || 0);
+  const nightSurcharge = Number(booking?.nightSurcharge || 0);
+
+  // Legacy-bug guard: if baseFare was copied from fare and night exists, avoid double-count.
+  if (baseFare > 0 && nightSurcharge > 0 && Math.abs(baseFare - fare) <= 1) {
+    return fare;
+  }
+
+  if (baseFare > 0) return baseFare + nightSurcharge;
+  return fare;
+};
+
+const getBookingTotalFare = (booking) =>
+  getOneWayFare(booking) +
+  Number(booking?.returnTripFare || 0) +
+  Number(booking?.penaltyApplied || 0) +
+  Number(booking?.tollFee || 0);
+
 // ================= GET ACTIVE BOOKING (Persistence) =================
 export const getActiveBooking = async (req, res) => {
   try {
@@ -37,7 +57,7 @@ export const getActiveBooking = async (req, res) => {
     }
 
     // Always expose computed trip total for consistency
-    booking.totalFare = (booking.fare || 0) + (booking.nightSurcharge || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
+    booking.totalFare = getBookingTotalFare(booking);
 
     res.json({
       success: true,
@@ -83,6 +103,15 @@ export const createBooking = async (req, res) => {
       }
     }
 
+    const incomingFare = Number(req.body.fare || 0);
+    const incomingNightSurcharge = Number(req.body.nightSurcharge || 0);
+    const incomingBaseFare = Number(req.body.baseFare || 0);
+    const normalizedBaseFare = incomingBaseFare > 0 ? incomingBaseFare : Math.max(0, incomingFare - incomingNightSurcharge);
+    const normalizedOneWayFare = incomingFare > 0 ? incomingFare : normalizedBaseFare + incomingNightSurcharge;
+    const normalizedTotalFare =
+      Number(req.body.totalFare || 0) ||
+      (normalizedOneWayFare + Number(req.body.returnTripFare || 0) + Number(req.body.tollFee || 0));
+
     const booking = await Booking.create({
       user: req.userId,
       pickupLocation,
@@ -97,14 +126,14 @@ export const createBooking = async (req, res) => {
       scheduledDate: bookingType === "schedule" ? scheduledDate : null,
       // Scheduled rides start as 'scheduled'; ride-now rides start as 'pending'
       status: bookingType === "schedule" ? "scheduled" : "pending",
-      baseFare: req.body.baseFare || req.body.fare || 0,
+      baseFare: normalizedBaseFare,
       distance: req.body.distance || 0,
       duration: req.body.duration || 0,
-      nightSurcharge: req.body.nightSurcharge || 0,
-      fare: req.body.fare || 0,
+      nightSurcharge: incomingNightSurcharge,
+      fare: normalizedOneWayFare,
       hasReturnTrip: req.body.hasReturnTrip || false,
       returnTripFare: req.body.returnTripFare || 0,
-      totalFare: req.body.totalFare || (Number(req.body.fare || 0) + Number(req.body.nightSurcharge || 0) + Number(req.body.returnTripFare || 0) + Number(req.body.tollFee || 0)),
+      totalFare: normalizedTotalFare,
       tollFee: req.body.tollFee || 0,
       waitingLimit: resolveWaitingLimitSeconds(req.body.distance || 0), // Store in seconds
     });
@@ -419,7 +448,7 @@ export const getBookingById = async (req, res) => {
     }
 
     // Always expose computed trip total for consistency in history/details
-    booking.totalFare = (booking.fare || 0) + (booking.nightSurcharge || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
+    booking.totalFare = getBookingTotalFare(booking);
 
     res.json({
       booking
@@ -538,7 +567,7 @@ export const getBookingStatus = async (req, res) => {
     }
 
     // Always expose computed trip total for consistency in tracking/details
-    booking.totalFare = (booking.fare || 0) + (booking.nightSurcharge || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
+    booking.totalFare = getBookingTotalFare(booking);
 
     res.json({
       success: true,
@@ -608,7 +637,7 @@ export const completeRide = async (req, res) => {
     booking.rideCompletedAt = new Date();
 
     // Always store full trip total (base + return + penalty)
-    booking.totalFare = (booking.fare || 0) + (booking.nightSurcharge || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
+    booking.totalFare = getBookingTotalFare(booking);
 
     await booking.save();
 

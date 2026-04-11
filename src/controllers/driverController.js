@@ -13,6 +13,26 @@ import { getIO } from "../utils/socketLogic.js";
 import { sendPushNotification } from "../utils/notifications.js";
 import { uploadToImageKit } from "../utils/imagekit.js";
 
+const getOneWayFare = (booking) => {
+  const fare = Number(booking?.fare || 0);
+  const baseFare = Number(booking?.baseFare || 0);
+  const nightSurcharge = Number(booking?.nightSurcharge || 0);
+
+  // Legacy-bug guard: if baseFare was copied from fare and night exists, avoid double-count.
+  if (baseFare > 0 && nightSurcharge > 0 && Math.abs(baseFare - fare) <= 1) {
+    return fare;
+  }
+
+  if (baseFare > 0) return baseFare + nightSurcharge;
+  return fare;
+};
+
+const getBookingTotalFare = (booking) =>
+  getOneWayFare(booking) +
+  Number(booking?.returnTripFare || 0) +
+  Number(booking?.penaltyApplied || 0) +
+  Number(booking?.tollFee || 0);
+
 // ================= GENERATE JWT TOKEN FOR DRIVER =================
 const generateDriverToken = (driverId) => {
   return jwt.sign(
@@ -1041,7 +1061,7 @@ export const updateBookingStatus = async (req, res) => {
       if (!booking.fare || booking.fare === 0) {
         booking.fare = fare || 0;
       }
-      booking.totalFare = (booking.fare || 0) + (booking.nightSurcharge || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
+      booking.totalFare = getBookingTotalFare(booking);
       booking.distance = distance || booking.distance || 0;
       booking.paymentStatus = booking.paymentStatus === "paid" ? "paid" : "pending";
 
@@ -1571,7 +1591,7 @@ export const completeRide = async (req, res) => {
     if (!booking.fare || booking.fare === 0) {
       booking.fare = fare || 0;
     }
-    booking.totalFare = (booking.fare || 0) + (booking.nightSurcharge || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
+    booking.totalFare = getBookingTotalFare(booking);
     booking.distance = distance || booking.distance || 0;
     booking.paymentStatus = booking.paymentStatus === "paid" ? "paid" : "pending";
     booking.rideCompletedAt = new Date();
