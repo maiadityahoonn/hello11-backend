@@ -851,6 +851,9 @@ export const acceptBooking = async (req, res) => {
     }
 
     if (driver.unpaidRideCount >= 3 && driver.pendingCommission > 0) {
+      serverLog(
+        `ACCEPT BLOCKED: driver=${req.driverId} booking=${req.params.id} reason=pending_commission unpaidRideCount=${driver.unpaidRideCount} pendingCommission=${driver.pendingCommission}`
+      );
       return res.status(403).json({
         message: "Aapka 3 rides ka commission pending hai. Kripya pahle payment karein.",
         pendingCommission: driver.pendingCommission,
@@ -973,8 +976,12 @@ export const rejectBooking = async (req, res) => {
       booking.status = "pending";
       await booking.save();
 
-      // Make driver available again
-      await Driver.findByIdAndUpdate(req.driverId, { available: true });
+      // Make driver available again and clear active booking marker
+      await Driver.findByIdAndUpdate(req.driverId, {
+        available: true,
+        online: true,
+        currentBooking: null
+      });
     }
 
     res.json({
@@ -1573,7 +1580,8 @@ export const completeRide = async (req, res) => {
     // Clear driver's active booking
     await Driver.findByIdAndUpdate(req.driverId, {
       currentBooking: null,
-      available: true
+      available: true,
+      online: true
     });
 
     // Notify User via Socket
@@ -1613,6 +1621,8 @@ export const completeRide = async (req, res) => {
     // Make driver available again and update statistics/debt
     await Driver.findByIdAndUpdate(req.driverId, {
       available: true,
+      online: true,
+      currentBooking: null,
       $inc: {
         totalTrips: 1,
         totalEarnings: driverEarnings,

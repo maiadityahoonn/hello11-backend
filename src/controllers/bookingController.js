@@ -115,20 +115,44 @@ export const createBooking = async (req, res) => {
       const io = getIO();
       try {
         serverLog(`BROADCAST: Searching for drivers | RideType: ${booking.rideType} | Vehicle: ${booking.vehicleType}`);
+        const locationNear = {
+          $near: {
+            $geometry: {
+              type: "Point",
+              coordinates: [booking.pickupLongitude, booking.pickupLatitude]
+            },
+            $maxDistance: booking.rideType === 'outstation' ? 20000 : 5000
+          }
+        };
+
+        // Dispatch debug telemetry to understand why a driver might not receive requests.
+        const [nearbyOnlineCount, nearbyAvailableCount, nearbyVerifiedCount] = await Promise.all([
+          Driver.countDocuments({
+            online: true,
+            location: locationNear
+          }),
+          Driver.countDocuments({
+            online: true,
+            available: true,
+            location: locationNear
+          }),
+          Driver.countDocuments({
+            online: true,
+            available: true,
+            isVerified: true,
+            location: locationNear
+          })
+        ]);
+
+        serverLog(
+          `DISPATCH DEBUG: booking=${booking._id} | onlineNearby=${nearbyOnlineCount} | availableNearby=${nearbyAvailableCount} | verifiedNearby=${nearbyVerifiedCount}`
+        );
 
         const query = {
           available: true,
           online: true,
           isVerified: true,
-          location: {
-            $near: {
-              $geometry: {
-                type: "Point",
-                coordinates: [booking.pickupLongitude, booking.pickupLatitude]
-              },
-              $maxDistance: booking.rideType === 'outstation' ? 20000 : 5000 // 20KM for outstation, 5KM for local
-            }
-          }
+          location: locationNear
         };
 
         // For outstation, strictly match the selected vehicle type and service support
