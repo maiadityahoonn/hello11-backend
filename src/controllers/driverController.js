@@ -1228,7 +1228,16 @@ export const getDriverHistory = async (req, res) => {
 // ================= GET DRIVER EARNINGS =================
 export const getDriverEarnings = async (req, res) => {
   try {
-    const { period = "week", dateFrom, dateTo } = req.query;
+    const { 
+      period = "week", 
+      dateFrom, 
+      dateTo,
+      txPage = 1,
+      txLimit = 20,
+      commPage = 1,
+      commLimit = 20
+    } = req.query;
+
     let startDate = new Date();
     startDate.setHours(0, 0, 0, 0);
     let endDate = new Date();
@@ -1260,18 +1269,6 @@ export const getDriverEarnings = async (req, res) => {
       }
     }
 
-    // Filtered bookings for the selected period
-    const query = {
-      driver: req.driverId,
-      status: "completed"
-    };
-    
-    if (period !== "all") {
-      query.createdAt = { $gte: startDate, $lte: endDate };
-    }
-
-    const periodBookings = await Booking.find(query).sort({ createdAt: 1 });
-
     const bookingFare = (booking) => {
       if (booking.totalFare && booking.totalFare > 0) return booking.totalFare;
       return (Number(booking.fare) || 0) + 
@@ -1281,58 +1278,74 @@ export const getDriverEarnings = async (req, res) => {
              (Number(booking.tollFee) || 0);
     };
 
-    // Fetch all completed bookings for calendar dots to show lifetime history
-    const calendarQuery = {
-      driver: req.driverId,
-      status: "completed"
+    const commonFilter = { driver: req.driverId };
+    const periodFilter = { ...commonFilter, status: "completed" };
+    if (period !== "all") {
+      periodFilter.createdAt = { $gte: startDate, $lte: endDate };
+    }
+
+    const txPageNum = Math.max(parseInt(txPage) || 1, 1);
+    const txLimitNum = Math.min(Math.max(parseInt(txLimit) || 20, 1), 50);
+    const commPageNum = Math.max(parseInt(commPage) || 1, 1);
+    const commLimitNum = Math.min(Math.max(parseInt(commLimit) || 20, 1), 50);
+
+    const txFilter = { driver: req.driverId };
+    if (period !== "all") {
+      txFilter.createdAt = { $gte: startDate, $lte: endDate };
+    }
+
+    const commFilterObj = { 
+      driver: req.driverId, 
+      status: "completed",
+      adminCommission: { $gt: 0 }
     };
-    const calendarBookings = await Booking.find(calendarQuery).select('createdAt fare totalFare nightSurcharge returnTripFare penaltyApplied tollFee');
-    
+    if (period !== "all") {
+      commFilterObj.createdAt = { $gte: startDate, $lte: endDate };
+    }
+
+    // Parallel execution of all data requirements
+    const [
+      periodBookings,
+      calendarBookings,
+      driver,
+      payouts,
+      transactions,
+      txTotal,
+      rideCommissions,
+      commTotal
+    ] = await Promise.all([
+      Booking.find(periodFilter).sort({ createdAt: 1 }),
+      Booking.find({ driver: req.driverId, status: "completed" }).select('createdAt fare totalFare nightSurcharge returnTripFare penaltyApplied tollFee'),
+      Driver.findById(req.driverId),
+      Payout.find({ driver: req.driverId, createdAt: { $gte: startDate, $lte: endDate } }).sort({ createdAt: -1 }),
+      Transaction.find(txFilter).sort({ createdAt: -1 }).limit(txLimitNum).skip((txPageNum - 1) * txLimitNum),
+      Transaction.countDocuments(txFilter),
+      Booking.find(commFilterObj).select('pickupLocation dropLocation totalFare fare adminCommission createdAt').sort({ createdAt: -1 }).limit(commLimitNum).skip((commPageNum - 1) * commLimitNum),
+      Booking.countDocuments(commFilterObj)
+    ]);
+
+    if (!driver) {
+      return res.status(404).json({ message: "Driver not found" });
+    }
+
+    // Process daily stats for calendar dots
     const dailyStats = {};
     calendarBookings.forEach(booking => {
       const dateKey = booking.createdAt.toISOString().split('T')[0];
-      const fare = bookingFare(booking);
-      dailyStats[dateKey] = (dailyStats[dateKey] || 0) + fare;
+      dailyStats[dateKey] = (dailyStats[dateKey] || 0) + bookingFare(booking);
     });
 
     const periodEarnings = periodBookings.reduce((sum, booking) => sum + bookingFare(booking), 0);
     const periodTrips = periodBookings.length;
     const periodAvgFare = periodTrips > 0 ? (periodEarnings / periodTrips).toFixed(0) : 0;
     
-    const driver = await Driver.findById(req.driverId);
-    if (!driver) {
-      return res.status(404).json({ message: "Driver not found" });
-    }
-
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    
     const todayEarnings = periodBookings
       .filter(b => b.createdAt >= todayStart)
       .reduce((sum, booking) => sum + bookingFare(booking), 0);
 
-    // Filter payouts
-    const payouts = await Payout.find({
-      driver: req.driverId,
-      createdAt: { $gte: startDate, $lte: endDate }
-    }).sort({ createdAt: -1 });
-
     const onlineHours = Math.round(((driver.onlineTime || 0) / 60) * 10) / 10;
-
-    // Fetch transactions (Driver -> Admin)
-    const transactions = await Transaction.find({ driver: req.driverId })
-      .sort({ createdAt: -1 })
-      .limit(20);
-
-    // Fetch specific ride commissions
-    const rideCommissions = await Booking.find({ 
-      driver: req.driverId, 
-      status: "completed",
-      adminCommission: { $gt: 0 }
-    })
-    .select('pickupLocation dropLocation totalFare fare adminCommission createdAt')
-    .sort({ createdAt: -1 })
-    .limit(20);
 
     res.json({
       earnings: {
@@ -1347,7 +1360,17 @@ export const getDriverEarnings = async (req, res) => {
         period,
         dailyStats,
         transactions,
+        txPagination: {
+          total: txTotal,
+          page: txPageNum,
+          pages: Math.ceil(txTotal / txLimitNum)
+        },
         rideCommissions,
+        commPagination: {
+          total: commTotal,
+          page: commPageNum,
+          pages: Math.ceil(commTotal / commLimitNum)
+        },
         activities: payouts.map(p => ({
           id: p._id,
           type: "payout",
