@@ -38,10 +38,12 @@ export const createOrder = async (req, res) => {
             return res.status(400).json({ message: "No pending commission to pay" });
         }
 
+        const shortReceipt = `drv_${String(driver._id).slice(-8)}_${Date.now().toString().slice(-8)}`;
         const options = {
             amount: amount,
             currency: "INR",
-            receipt: `receipt_driver_${driver._id}_${Date.now()}`,
+            // Razorpay constraint: max 40 chars
+            receipt: shortReceipt,
         };
 
         const order = await razorpay.orders.create(options);
