@@ -1215,14 +1215,16 @@ export const getDriverHistory = async (req, res) => {
         tollFee: booking.tollFee || 0,
         penaltyApplied: booking.penaltyApplied || 0,
         returnTripFare: booking.returnTripFare || 0,
+        baseFare: booking.baseFare || 0,
+        nightSurcharge: booking.nightSurcharge || 0,
         hasReturnTrip: !!booking.hasReturnTrip,
-        totalFare: (booking.fare || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0),
+        totalFare: getBookingTotalFare(booking),
         distance: booking.distance,
         paymentStatus: booking.paymentStatus,
         paymentMethod: booking.paymentMethod || "cash",
-        nightFareAmount: booking.nightFareAmount || booking.nightFare || booking.nightCharge || 0,
-        isNightFare: !!booking.isNightFare,
-        nightFareApplied: !!booking.nightFareApplied,
+        nightFareAmount: Number(booking.nightSurcharge || booking.nightFareAmount || booking.nightFare || booking.nightCharge || 0),
+        isNightFare: Number(booking.nightSurcharge || 0) > 0,
+        nightFareApplied: Number(booking.nightSurcharge || 0) > 0,
         scheduledDate: booking.scheduledDate || null,
         user: booking.user,
         rating: booking.rating || 0,
@@ -1296,14 +1298,7 @@ export const getDriverEarnings = async (req, res) => {
       }
     }
 
-    const bookingFare = (booking) => {
-      if (booking.totalFare && booking.totalFare > 0) return booking.totalFare;
-      return (Number(booking.fare) || 0) + 
-             (Number(booking.nightSurcharge) || 0) + 
-             (Number(booking.returnTripFare) || 0) + 
-             (Number(booking.penaltyApplied) || 0) + 
-             (Number(booking.tollFee) || 0);
-    };
+    const bookingFare = (booking) => getBookingTotalFare(booking);
 
     const commonFilter = { driver: req.driverId };
     const periodFilter = { ...commonFilter, status: "completed" };
@@ -1347,7 +1342,11 @@ export const getDriverEarnings = async (req, res) => {
       Payout.find({ driver: req.driverId, createdAt: { $gte: startDate, $lte: endDate } }).sort({ createdAt: -1 }),
       Transaction.find(txFilter).sort({ createdAt: -1 }).limit(txLimitNum).skip((txPageNum - 1) * txLimitNum),
       Transaction.countDocuments(txFilter),
-      Booking.find(commFilterObj).select('pickupLocation dropLocation totalFare fare adminCommission createdAt').sort({ createdAt: -1 }).limit(commLimitNum).skip((commPageNum - 1) * commLimitNum),
+      Booking.find(commFilterObj)
+        .select('pickupLocation dropLocation totalFare fare baseFare nightSurcharge returnTripFare penaltyApplied tollFee hasReturnTrip adminCommission createdAt')
+        .sort({ createdAt: -1 })
+        .limit(commLimitNum)
+        .skip((commPageNum - 1) * commLimitNum),
       Booking.countDocuments(commFilterObj)
     ]);
 
@@ -1374,6 +1373,22 @@ export const getDriverEarnings = async (req, res) => {
 
     const onlineHours = Math.round(((driver.onlineTime || 0) / 60) * 10) / 10;
 
+    const commissionRows = rideCommissions.map((booking) => ({
+      _id: booking._id,
+      pickupLocation: booking.pickupLocation,
+      dropLocation: booking.dropLocation,
+      createdAt: booking.createdAt,
+      adminCommission: booking.adminCommission || 0,
+      fare: getOneWayFare(booking),
+      baseFare: booking.baseFare || 0,
+      nightSurcharge: booking.nightSurcharge || 0,
+      returnTripFare: booking.returnTripFare || 0,
+      penaltyApplied: booking.penaltyApplied || 0,
+      tollFee: booking.tollFee || 0,
+      hasReturnTrip: !!booking.hasReturnTrip,
+      totalFare: getBookingTotalFare(booking)
+    }));
+
     res.json({
       earnings: {
         totalEarnings: periodEarnings,
@@ -1392,7 +1407,7 @@ export const getDriverEarnings = async (req, res) => {
           page: txPageNum,
           pages: Math.ceil(txTotal / txLimitNum)
         },
-        rideCommissions,
+        rideCommissions: commissionRows,
         commPagination: {
           total: commTotal,
           page: commPageNum,
