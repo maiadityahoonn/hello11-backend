@@ -6,6 +6,7 @@ import { createNotification } from "./notificationController.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import Payout from "../models/Payout.js";
+import Transaction from "../models/Transaction.js";
 import { serverLog } from "../utils/logger.js";
 import { getIO } from "../utils/socketLogic.js";
 
@@ -1318,6 +1319,21 @@ export const getDriverEarnings = async (req, res) => {
 
     const onlineHours = Math.round(((driver.onlineTime || 0) / 60) * 10) / 10;
 
+    // Fetch transactions (Driver -> Admin)
+    const transactions = await Transaction.find({ driver: req.driverId })
+      .sort({ createdAt: -1 })
+      .limit(20);
+
+    // Fetch specific ride commissions
+    const rideCommissions = await Booking.find({ 
+      driver: req.driverId, 
+      status: "completed",
+      adminCommission: { $gt: 0 }
+    })
+    .select('pickupLocation dropLocation totalFare fare adminCommission createdAt')
+    .sort({ createdAt: -1 })
+    .limit(20);
+
     res.json({
       earnings: {
         totalEarnings: periodEarnings,
@@ -1325,9 +1341,13 @@ export const getDriverEarnings = async (req, res) => {
         averageFare: periodAvgFare,
         todayEarnings,
         lifetimeBalance: driver.totalEarnings || 0,
+        pendingCommission: driver.pendingCommission || 0,
+        unpaidRideCount: driver.unpaidRideCount || 0,
         onlineHours,
         period,
-        dailyStats, // Added for calendar visualization
+        dailyStats,
+        transactions,
+        rideCommissions,
         activities: payouts.map(p => ({
           id: p._id,
           type: "payout",

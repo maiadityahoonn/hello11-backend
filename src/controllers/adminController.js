@@ -1,6 +1,7 @@
 import User from "../models/User.js";
 import Driver from "../models/Driver.js";
 import Booking from "../models/Booking.js";
+import Transaction from "../models/Transaction.js";
 
 // ================= DASHBOARD STATS =================
 export const getDashboardStats = async (req, res) => {
@@ -308,6 +309,32 @@ export const verifyDriver = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       message: "Failed to verify driver",
+      error: error.message
+    });
+  }
+};
+// ================= GET FINANCIAL REPORTS =================
+export const getFinancialReports = async (req, res) => {
+  try {
+    const transactions = await Transaction.find()
+      .populate("driver", "name mobile vehicleNumber")
+      .sort({ createdAt: -1 })
+      .limit(100);
+
+    const rideCommissions = await Booking.find({ status: "completed", adminCommission: { $gt: 0 } })
+      .populate("driver", "name")
+      .populate("user", "name")
+      .select('pickupLocation dropLocation totalFare fare adminCommission driverEarnings createdAt')
+      .sort({ createdAt: -1 })
+      .limit(100);
+
+    res.json({
+      transactions,
+      rideCommissions
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to fetch financial reports",
       error: error.message
     });
   }

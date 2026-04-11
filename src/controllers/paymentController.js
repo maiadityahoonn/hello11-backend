@@ -1,6 +1,7 @@
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import Driver from "../models/Driver.js";
+import Transaction from "../models/Transaction.js";
 import { serverLog } from "../utils/logger.js";
 
 // Initialize Razorpay
@@ -60,6 +61,18 @@ export const verifyPayment = async (req, res) => {
             // Success: Reset driver's commission and count
             const driver = await Driver.findById(req.driverId);
             if (driver) {
+                // Record the transaction before resetting balance
+                await Transaction.create({
+                    driver: driver._id,
+                    amount: driver.pendingCommission,
+                    type: "payment_to_admin",
+                    status: "completed",
+                    razorpayOrderId: razorpay_order_id,
+                    razorpayPaymentId: razorpay_payment_id,
+                    method: "razorpay",
+                    note: `Commission payment for ${driver.unpaidRideCount} rides`
+                });
+
                 driver.pendingCommission = 0;
                 driver.unpaidRideCount = 0;
                 await driver.save();

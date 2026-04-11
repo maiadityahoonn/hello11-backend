@@ -8,7 +8,8 @@ import {
   deleteDriver,
   verifyDriver,
   updateBookingStatus,
-  manualPaymentReset
+  manualPaymentReset,
+  getFinancialReports
 } from "../controllers/adminController.js";
 
 const router = express.Router();
@@ -29,5 +30,8 @@ router.put("/drivers/:id/reset-commission", manualPaymentReset);
 // Bookings management
 router.get("/bookings", getAllBookings);
 router.put("/bookings/:id/status", updateBookingStatus);
+
+// Financials
+router.get("/financials", getFinancialReports);
 
 export default router;
