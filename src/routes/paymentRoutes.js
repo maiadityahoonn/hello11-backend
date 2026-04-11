@@ -1,10 +1,10 @@
 import express from "express";
 import { createOrder, verifyPayment } from "../controllers/paymentController.js";
-import { protectDriver } from "../middleware/authMiddleware.js";
+import { authenticateDriver } from "../middleware/driverAuth.js";
 
 const router = express.Router();
 
-router.post("/create-order", protectDriver, createOrder);
-router.post("/verify-payment", protectDriver, verifyPayment);
+router.post("/create-order", authenticateDriver, createOrder);
+router.post("/verify-payment", authenticateDriver, verifyPayment);
 
 export default router;
