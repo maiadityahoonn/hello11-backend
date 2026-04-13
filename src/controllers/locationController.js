@@ -174,6 +174,7 @@ export const getDirections = async (req, res) => {
 export const getAutocomplete = async (req, res) => {
   try {
     const rawQuery = req.query.query;
+    const { lat, lon } = req.query;
     const query = String(rawQuery || "").trim().replace(/\s+/g, " ");
     if (!query) return res.status(400).json({ error: "Query is required" });
 
