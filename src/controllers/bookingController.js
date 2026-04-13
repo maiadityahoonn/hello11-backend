@@ -232,7 +232,64 @@ export const createBooking = async (req, res) => {
         serverLog(`BROADCAST ERROR: ${err.message}`);
       }
     } else {
-      serverLog(`SCHEDULED: Booking ${booking._id} created with scheduled date ${booking.scheduledDate}. Driver broadcast skipped.`);
+      // For scheduled rides, notify nearby drivers immediately so interested drivers can pre-accept.
+      try {
+        const io = getIO();
+        const maxDistanceMeters = booking.rideType === "outstation" ? 50000 : 20000;
+
+        const query = {
+          available: true,
+          online: true,
+          isVerified: true,
+          location: {
+            $near: {
+              $geometry: {
+                type: "Point",
+                coordinates: [booking.pickupLongitude, booking.pickupLatitude]
+              },
+              $maxDistance: maxDistanceMeters
+            }
+          }
+        };
+
+        if (booking.rideType === "outstation") {
+          query.vehicleType = booking.vehicleType;
+          query.serviceType = { $in: ["rental", "both"] };
+        }
+
+        const nearbyDrivers = await Driver.find(query);
+        serverLog(`SCHEDULED: Notifying ${nearbyDrivers.length} nearby drivers immediately for booking ${booking._id}`);
+
+        nearbyDrivers.forEach((driver) => {
+          io.to(driver._id.toString()).emit("newRideRequest", {
+            bookingId: booking._id,
+            pickup: pickupLocation,
+            drop: dropLocation,
+            fare: booking.fare,
+            distance: booking.distance,
+            rideType: booking.rideType,
+            vehicleType: booking.vehicleType,
+            bookingType: "schedule",
+            scheduledDate: booking.scheduledDate
+          });
+
+          if (driver.pushToken) {
+            sendPushNotification(
+              driver.pushToken,
+              "Scheduled Ride Request",
+              `${booking.rideType === "outstation" ? "Outstation" : "Local"} scheduled ride at ${new Date(booking.scheduledDate).toLocaleString("en-IN")}.`,
+              {
+                bookingId: booking._id.toString(),
+                type: "new_ride",
+                bookingType: "schedule",
+                scheduledDate: booking.scheduledDate
+              }
+            );
+          }
+        });
+      } catch (err) {
+        serverLog(`SCHEDULED BROADCAST ERROR: ${err.message}`);
+      }
     }
 
     if (req.userId) await clearUserCache(req.userId, 'user');
@@ -920,6 +977,68 @@ export const acceptReturnOffer = async (req, res) => {
   }
 };
 
+// ================= CONFIRM RETURN RIDE START =================
+export const confirmReturnRideStart = async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({ message: "Booking not found" });
+    }
+
+    if (booking.user.toString() !== req.userId) {
+      return res.status(403).json({ message: "Not authorized to confirm return start" });
+    }
+
+    if (booking.status === "return_ride_started") {
+      return res.json({ message: "Return ride already started", booking: { id: booking._id, status: booking.status } });
+    }
+
+    if (booking.status !== "waiting") {
+      return res.status(400).json({ message: "Return ride can only be started from waiting state" });
+    }
+
+    if (!booking.returnStartRequested) {
+      return res.status(400).json({ message: "No pending return start request from driver" });
+    }
+
+    if (!booking.hasReturnTrip && Number(booking.returnTripFare || 0) <= 0) {
+      return res.status(400).json({ message: "No return trip is active for this booking" });
+    }
+
+    booking.status = "return_ride_started";
+    booking.returnStartRequested = false;
+    booking.returnStartRequestedAt = null;
+    booking.isWaiting = false;
+    await booking.save();
+
+    const io = getIO();
+    const payload = {
+      bookingId: booking._id.toString(),
+      status: "return_ride_started",
+      message: "Return ride started after user confirmation"
+    };
+    io.to(booking.user.toString()).emit("rideStatusUpdate", payload);
+    if (booking.driver) {
+      io.to(booking.driver.toString()).emit("rideStatusUpdate", payload);
+      io.to(booking.driver.toString()).emit("returnRideStartConfirmed", {
+        bookingId: booking._id.toString(),
+        message: "User confirmed. Return ride started."
+      });
+    }
+
+    return res.json({
+      message: "Return ride started successfully",
+      booking: {
+        id: booking._id,
+        status: booking.status
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ message: "Failed to confirm return ride start", error: error.message });
+  }
+};
+
 // ================= START WAITING =================
 export const startWaiting = async (req, res) => {
   try {
@@ -962,6 +1081,8 @@ export const startWaiting = async (req, res) => {
 
     booking.status = "waiting";
     booking.isWaiting = true;
+    booking.returnStartRequested = false;
+    booking.returnStartRequestedAt = null;
     if (TEST_WAITING_LIMIT_SECONDS) {
       booking.waitingLimit = TEST_WAITING_LIMIT_SECONDS;
     } else if (!booking.waitingLimit || booking.waitingLimit <= 0) {

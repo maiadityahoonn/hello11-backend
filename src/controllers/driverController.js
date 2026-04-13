@@ -33,6 +33,11 @@ const getBookingTotalFare = (booking) =>
   Number(booking?.penaltyApplied || 0) +
   Number(booking?.tollFee || 0);
 
+const isFutureScheduledBooking = (booking) =>
+  booking?.bookingType === "schedule" &&
+  booking?.scheduledDate &&
+  new Date(booking.scheduledDate).getTime() > Date.now();
+
 // ================= GENERATE JWT TOKEN FOR DRIVER =================
 const generateDriverToken = (driverId) => {
   return jwt.sign(
@@ -592,15 +597,20 @@ export const updateDriverLocation = async (req, res) => {
     try {
       if (driver.currentBooking) {
         const io = getIO();
-        io.to(driver.currentBooking.toString()).emit("driverLocationUpdate", {
-          bookingId: driver.currentBooking,
-          latitude: latitude,
-          longitude: longitude
-        });
-
-        // Also broadcast to user room for safety
         const activeBooking = await Booking.findById(driver.currentBooking);
-        if (activeBooking) {
+        const shouldTrackCurrentBooking =
+          activeBooking &&
+          !["completed", "cancelled"].includes(activeBooking.status) &&
+          !isFutureScheduledBooking(activeBooking);
+
+        if (shouldTrackCurrentBooking) {
+          io.to(driver.currentBooking.toString()).emit("driverLocationUpdate", {
+            bookingId: driver.currentBooking,
+            latitude: latitude,
+            longitude: longitude
+          });
+
+          // Also broadcast to user room for safety
           io.to(activeBooking.user.toString()).emit("driverLocationUpdate", {
             bookingId: activeBooking._id,
             latitude: latitude,
@@ -628,12 +638,20 @@ export const updateDriverLocation = async (req, res) => {
               serverLog(`Proximity alert sent: Driver ${req.driverId} is within ${Math.round(distance)}m of user ${activeBooking.user}`);
             }
           }
+        } else if (activeBooking && isFutureScheduledBooking(activeBooking)) {
+          // Avoid linking live location to a ride scheduled for later.
+          await Driver.findByIdAndUpdate(req.driverId, { currentBooking: null });
         }
       } else {
         // Fallback for logic safety
+        const now = new Date();
         const activeBooking = await Booking.findOne({
           driver: req.driverId,
-          status: { $in: ["accepted", "arrived", "started"] }
+          status: { $in: ["accepted", "arrived", "started"] },
+          $or: [
+            { bookingType: { $ne: "schedule" } },
+            { scheduledDate: { $lte: now } }
+          ]
         });
         if (activeBooking) {
           const io = getIO();
@@ -769,19 +787,29 @@ export const getAvailableBookings = async (req, res) => {
 export const getCurrentBooking = async (req, res) => {
   try {
     const driver = await Driver.findById(req.driverId);
+    const now = new Date();
 
     let booking;
     if (driver && driver.currentBooking) {
       booking = await Booking.findById(driver.currentBooking)
         .populate("user", "name mobile profileImage")
         .populate("driver", "name mobile vehicleModel vehicleNumber rating latitude longitude location");
+
+      if (booking && isFutureScheduledBooking(booking)) {
+        await Driver.findByIdAndUpdate(req.driverId, { currentBooking: null });
+        booking = null;
+      }
     }
 
     // Fallback if currentBooking is missing or stale - includes all active statuses
     if (!booking) {
       booking = await Booking.findOne({
         driver: req.driverId,
-        status: { $in: ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"] }
+        status: { $in: ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"] },
+        $or: [
+          { bookingType: { $ne: "schedule" } },
+          { scheduledDate: { $lte: now } }
+        ]
       })
         .sort({ createdAt: -1 })
         .populate("user", "name mobile profileImage")
@@ -855,7 +883,7 @@ export const acceptBooking = async (req, res) => {
       });
     }
 
-    if (booking.status !== "pending" && booking.status !== "driver_assigned") {
+    if (!["pending", "driver_assigned", "scheduled"].includes(booking.status)) {
       return res.status(400).json({
         message: "This booking cannot be accepted"
       });
@@ -883,10 +911,19 @@ export const acceptBooking = async (req, res) => {
 
     if (driver.currentBooking) {
       const activeCheck = await Booking.findById(driver.currentBooking);
-      if (activeCheck && !["completed", "cancelled"].includes(activeCheck.status)) {
+      if (
+        activeCheck &&
+        !["completed", "cancelled"].includes(activeCheck.status) &&
+        !isFutureScheduledBooking(activeCheck)
+      ) {
         return res.status(400).json({
           message: "You already have an active ride"
         });
+      }
+
+      // Cleanup stale future-scheduled pointer so live bookings can attach correctly.
+      if (activeCheck && isFutureScheduledBooking(activeCheck)) {
+        driver.currentBooking = null;
       }
     }
 
@@ -896,9 +933,10 @@ export const acceptBooking = async (req, res) => {
     await booking.save();
     serverLog(`Booking ${booking._id} accepted by driver ${req.driverId}`);
 
-    // Make driver unavailable and track current ride
-    driver.available = false;
-    driver.currentBooking = booking._id;
+    // For future scheduled rides, keep driver available until ride-time reminder window.
+    const shouldLockDriverNow = !isFutureScheduledBooking(booking);
+    driver.available = shouldLockDriverNow ? false : driver.available;
+    driver.currentBooking = shouldLockDriverNow ? booking._id : null;
     await driver.save();
 
     const populatedBooking = await Booking.findById(booking._id)
@@ -1047,6 +1085,49 @@ export const updateBookingStatus = async (req, res) => {
     if (!validTransitions[booking.status]?.includes(status)) {
       return res.status(400).json({
         message: `Cannot transition from ${booking.status} to ${status}`
+      });
+    }
+
+    if (status === "return_ride_started") {
+      if (!booking.hasReturnTrip && Number(booking.returnTripFare || 0) <= 0) {
+        return res.status(400).json({
+          message: "No return trip offer active for this booking"
+        });
+      }
+
+      booking.returnStartRequested = true;
+      booking.returnStartRequestedAt = new Date();
+      await booking.save();
+
+      try {
+        const io = getIO();
+        const userRoom = booking.user.toString();
+        io.to(userRoom).emit("returnRideStartRequested", {
+          bookingId: booking._id.toString(),
+          message: "Driver wants to start the return trip. Please confirm."
+        });
+
+        const foundUser = await User.findById(booking.user);
+        if (foundUser?.pushToken) {
+          sendPushNotification(
+            foundUser.pushToken,
+            "Return Trip Confirmation",
+            "Driver is ready to start return trip. Please confirm from app.",
+            { bookingId: booking._id.toString(), type: "return_start_request" }
+          );
+        }
+      } catch (socketError) {
+        serverLog(`Return start request notification error: ${socketError.message}`);
+      }
+
+      return res.status(202).json({
+        message: "Return ride start request sent to user for confirmation",
+        requiresUserConfirmation: true,
+        booking: {
+          id: booking._id,
+          status: booking.status,
+          returnStartRequested: true
+        }
       });
     }
 
@@ -1804,16 +1885,26 @@ export const getDriverDashboard = async (req, res) => {
 
     // Current booking using explicit tracking
     let currentBooking = null;
+    const now = new Date();
     if (driver.currentBooking) {
       currentBooking = await Booking.findById(driver.currentBooking)
         .populate("user", "name mobile");
+
+      if (currentBooking && isFutureScheduledBooking(currentBooking)) {
+        await Driver.findByIdAndUpdate(req.driverId, { currentBooking: null });
+        currentBooking = null;
+      }
     }
 
     // Fallback only if needed (safety net)
     if (!currentBooking) {
       currentBooking = await Booking.findOne({
         driver: req.driverId,
-        status: { $in: ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"] }
+        status: { $in: ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"] },
+        $or: [
+          { bookingType: { $ne: "schedule" } },
+          { scheduledDate: { $lte: now } }
+        ]
       }).sort({ createdAt: -1 }).populate("user", "name mobile");
 
       // If found via fallback, sync it to driver.currentBooking

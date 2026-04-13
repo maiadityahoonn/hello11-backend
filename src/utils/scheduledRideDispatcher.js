@@ -3,6 +3,9 @@ import Booking from "../models/Booking.js";
 import Driver from "../models/Driver.js";
 import { getIO } from "./socketLogic.js";
 import { serverLog } from "./logger.js";
+import { sendPushNotification } from "./notifications.js";
+
+const ACTIVE_RIDE_STATUSES = ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"];
 
 /**
  * Dispatch a single scheduled booking to nearby drivers.
@@ -62,6 +65,20 @@ const dispatchBooking = async (booking) => {
                 bookingType: "schedule",         // Lets driver know it's a scheduled ride
                 scheduledDate: booking.scheduledDate
             });
+
+            if (driver.pushToken) {
+                sendPushNotification(
+                    driver.pushToken,
+                    "Scheduled Ride Is Live",
+                    `Scheduled ride from ${booking.pickupLocation} to ${booking.dropLocation} is now ready to accept.`,
+                    {
+                        bookingId: booking._id.toString(),
+                        type: "new_ride",
+                        bookingType: "schedule",
+                        scheduledDate: booking.scheduledDate
+                    }
+                );
+            }
             serverLog(`SCHEDULER: Emitted newRideRequest to driver ${driver._id}`);
         });
 
@@ -109,6 +126,113 @@ export const startScheduledRideDispatcher = () => {
                 for (const booking of dueSoon) {
                     await dispatchBooking(booking);
                 }
+            }
+
+            // Send reminder to the assigned driver right around scheduled time.
+            const reminderBookings = await Booking.find({
+                bookingType: "schedule",
+                status: { $in: ["accepted", "driver_assigned"] },
+                driver: { $ne: null },
+                rideTimeReminderSent: { $ne: true },
+                scheduledDate: {
+                    $gte: windowStart,
+                    $lte: windowEnd
+                }
+            }).populate("driver", "_id pushToken currentBooking");
+
+            for (const booking of reminderBookings) {
+                const driverId = booking.driver?._id?.toString?.();
+                if (!driverId) continue;
+
+                // Conflict handling: if this driver is already busy on another active ride, reassign this scheduled booking.
+                const activeOtherRide = await Booking.findOne({
+                    driver: driverId,
+                    _id: { $ne: booking._id },
+                    status: { $in: ACTIVE_RIDE_STATUSES }
+                }).select("_id status");
+
+                if (activeOtherRide) {
+                    serverLog(
+                        `SCHEDULER: Driver ${driverId} busy on booking ${activeOtherRide._id}. Reassigning scheduled booking ${booking._id}`
+                    );
+
+                    booking.driver = null;
+                    booking.status = "pending";
+                    booking.rideTimeReminderSent = false;
+                    await booking.save();
+
+                    io.to(driverId).emit("rideRequestCancelled", {
+                        bookingId: booking._id.toString(),
+                        reason: "Reassigned due to driver busy on another trip"
+                    });
+
+                    if (booking.user) {
+                        io.to(booking.user.toString()).emit("rideStatusUpdate", {
+                            bookingId: booking._id.toString(),
+                            status: "pending",
+                            message: "Assigned driver busy tha. Hum naya driver dhoondh rahe hain."
+                        });
+                    }
+
+                    await dispatchBooking(booking);
+                    continue;
+                }
+
+                io.to(driverId).emit("scheduledRideReminder", {
+                    bookingId: booking._id.toString(),
+                    pickup: booking.pickupLocation,
+                    drop: booking.dropLocation,
+                    scheduledDate: booking.scheduledDate,
+                    message: "Scheduled ride time has started. Please go to pickup location."
+                });
+
+                if (booking.driver.pushToken) {
+                    sendPushNotification(
+                        booking.driver.pushToken,
+                        "Scheduled Ride Reminder",
+                        "Your scheduled ride time has started. Please move to pickup now.",
+                        {
+                            bookingId: booking._id.toString(),
+                            type: "scheduled_ride_reminder",
+                            scheduledDate: booking.scheduledDate
+                        }
+                    );
+                }
+
+                // Lock driver onto this scheduled booking at ride-time if driver is free.
+                const driverDoc = await Driver.findById(driverId).select("currentBooking available");
+                if (driverDoc) {
+                    let canAttachScheduledRide = true;
+
+                    if (driverDoc.currentBooking) {
+                        const existing = await Booking.findById(driverDoc.currentBooking).select("status");
+                        if (existing && !["completed", "cancelled"].includes(existing.status) && String(existing._id) !== String(booking._id)) {
+                            canAttachScheduledRide = false;
+                        }
+                    }
+
+                    if (canAttachScheduledRide) {
+                        driverDoc.currentBooking = booking._id;
+                        driverDoc.available = false;
+                        await driverDoc.save();
+                    }
+                }
+
+                booking.rideTimeReminderSent = true;
+                await booking.save();
+                serverLog(`SCHEDULER: Sent ride-time reminder to driver ${driverId} for booking ${booking._id}`);
+            }
+
+            // Safety net: keep retrying overdue scheduled bookings that are still unassigned.
+            const overduePending = await Booking.find({
+                bookingType: "schedule",
+                status: "pending",
+                driver: null,
+                scheduledDate: { $lte: now }
+            }).limit(20);
+
+            for (const booking of overduePending) {
+                await dispatchBooking(booking);
             }
         } catch (err) {
             serverLog(`SCHEDULER: Cron error: ${err.message}`);

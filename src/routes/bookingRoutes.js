@@ -1,5 +1,5 @@
 import express from "express";
-import { createBooking, getActiveBooking, getUserBookings, getScheduledBookings, getScheduledHistory, getBookingById, cancelBooking, getBookingStatus, startRide, completeRide, verifyPayment, acceptReturnOffer, startWaiting, updatePaymentChoice, requestPayment } from "../controllers/bookingController.js";
+import { createBooking, getActiveBooking, getUserBookings, getScheduledBookings, getScheduledHistory, getBookingById, cancelBooking, getBookingStatus, startRide, completeRide, verifyPayment, acceptReturnOffer, confirmReturnRideStart, startWaiting, updatePaymentChoice, requestPayment } from "../controllers/bookingController.js";
 import { authenticate } from "../middleware/auth.js";
 
 import { cacheData } from "../middleware/cacheMiddleware.js";
@@ -23,6 +23,7 @@ router.put("/:id/start", startRide);
 router.put("/:id/complete", completeRide);
 router.put("/:id/verify-payment", verifyPayment);
 router.put("/:id/accept-return", acceptReturnOffer);
+router.put("/:id/confirm-return-start", confirmReturnRideStart);
 router.put("/:id/start-waiting", startWaiting);
 router.put("/:id/update-payment-choice", updatePaymentChoice);
 router.post("/:id/request-payment", requestPayment);

@@ -18,15 +18,18 @@ const getOneWayFare = (booking) => {
 };
 
 const getBookingTotalFare = (booking) => {
-  const explicitTotal = Number(booking?.totalFare || 0);
-  if (explicitTotal > 0) return explicitTotal;
-
-  return (
+  const computedTotal =
     getOneWayFare(booking) +
     Number(booking?.returnTripFare || 0) +
     Number(booking?.penaltyApplied || 0) +
-    Number(booking?.tollFee || 0)
-  );
+    Number(booking?.tollFee || 0);
+
+  // Prefer computed breakdown when components exist; old stored totalFare can be stale.
+  if (computedTotal > 0) return computedTotal;
+
+  const explicitTotal = Number(booking?.totalFare || 0);
+  if (explicitTotal > 0) return explicitTotal;
+  return 0;
 };
 
 // ================= DASHBOARD STATS =================
@@ -345,7 +348,7 @@ export const getFinancialReports = async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(100);
 
-    const rideCommissionsRaw = await Booking.find({ status: "completed", adminCommission: { $gt: 0 } })
+    const rideCommissionsRaw = await Booking.find({ status: "completed" })
       .populate("driver", "name")
       .populate("user", "name")
       .select('pickupLocation dropLocation totalFare fare baseFare nightSurcharge returnTripFare penaltyApplied tollFee adminCommission driverEarnings createdAt')
@@ -360,7 +363,7 @@ export const getFinancialReports = async (req, res) => {
         ...ride,
         totalFare,
         adminCommission,
-        driverEarnings: Number(ride.driverEarnings || (totalFare - adminCommission))
+        driverEarnings: Number(ride.driverEarnings ?? (totalFare - adminCommission))
       };
     });
 

@@ -177,6 +177,18 @@ const bookingSchema = new mongoose.Schema(
       type: Boolean,
       default: false
     },
+    rideTimeReminderSent: {
+      type: Boolean,
+      default: false
+    },
+    returnStartRequested: {
+      type: Boolean,
+      default: false
+    },
+    returnStartRequestedAt: {
+      type: Date,
+      default: null
+    },
     totalFare: {
       type: Number,
       default: 0

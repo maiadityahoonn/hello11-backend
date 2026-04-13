@@ -170,10 +170,11 @@ export const getDirections = async (req, res) => {
 };
 
 // Get autocomplete suggestions for address input fields
-// Uses Google Places Autocomplete API — prefix matching, India-restricted, 50km proximity-biased
+// Uses Google Places Autocomplete API - prefix matching, India-restricted, wider proximity-biased
 export const getAutocomplete = async (req, res) => {
   try {
-    const { query, lat, lon } = req.query;
+    const rawQuery = req.query.query;
+    const query = String(rawQuery || "").trim().replace(/\s+/g, " ");
     if (!query) return res.status(400).json({ error: "Query is required" });
 
     const userLat = lat ? parseFloat(lat) : null;
@@ -184,18 +185,18 @@ export const getAutocomplete = async (req, res) => {
     // This is the right API for address input fields:
     //   • Prefix matching: "Bhop" → Bhopal, "Del" → Delhi
     //   • components=country:in restricts to India at the API level
-    //   • location+radius provides soft 50km proximity recommendation
+    //   • location+radius provides soft proximity recommendation
     const autocompleteParams = {
       input: query,
       key: getGoogleApiKey(),
       components: "country:in",  // Hard-restrict to India at API level
       language: "en",
-      types: "geocode",          // Addresses + geographic places (not just businesses)
+      // Keep type open to avoid hiding many valid place names / POIs.
     };
 
     if (hasCoords) {
       autocompleteParams.location = `${userLat},${userLon}`;
-      autocompleteParams.radius = 50000;      // 50km soft proximity bias
+      autocompleteParams.radius = 2000000;      // Wider bias (~2000km), nearby first but pan-India visible
       autocompleteParams.strictbounds = false; // Nearby first, but don't cut off distant places
     }
 
@@ -209,7 +210,49 @@ export const getAutocomplete = async (req, res) => {
 
       // Fetch coordinates for each prediction via Place Details
       const suggestions = await Promise.all(
-        predictions.slice(0, 7).map(async (pred) => {
+        predictions.slice(0, 20).map(async (pred) => {
+          const geocodePredictionFallback = async () => {
+            try {
+              // First try geocode by place_id (more accurate than free-text address).
+              const geoByPlaceId = await axios.get(`${GOOGLE_MAPS_API_URL}/geocode/json`, {
+                params: {
+                  place_id: pred.place_id,
+                  key: getGoogleApiKey(),
+                },
+              });
+              const geoById = geoByPlaceId.data?.results?.[0]?.geometry?.location;
+              if (geoById?.lat !== undefined && geoById?.lng !== undefined) {
+                return {
+                  place_id: pred.place_id,
+                  display_name: pred.description,
+                  lat: geoById.lat.toString(),
+                  lon: geoById.lng.toString(),
+                };
+              }
+
+              const geoRes = await axios.get(`${GOOGLE_MAPS_API_URL}/geocode/json`, {
+                params: {
+                  address: pred.description,
+                  key: getGoogleApiKey(),
+                  region: "in",
+                  components: "country:IN",
+                },
+              });
+              const geo = geoRes.data?.results?.[0]?.geometry?.location;
+              if (geo?.lat !== undefined && geo?.lng !== undefined) {
+                return {
+                  place_id: pred.place_id,
+                  display_name: pred.description,
+                  lat: geo.lat.toString(),
+                  lon: geo.lng.toString(),
+                };
+              }
+            } catch {
+              // Ignore per-item fallback failure.
+            }
+            return { place_id: pred.place_id, display_name: pred.description, lat: "", lon: "" };
+          };
+
           try {
             const detailRes = await axios.get(`${GOOGLE_MAPS_API_URL}/place/details/json`, {
               params: {
@@ -219,45 +262,50 @@ export const getAutocomplete = async (req, res) => {
               },
             });
             const result = detailRes.data.result;
+            const detailLat = result?.geometry?.location?.lat;
+            const detailLon = result?.geometry?.location?.lng;
+
+            // Some predictions do not return geometry in Details due data/permission limits.
+            // Fallback to Geocoding by description so suggestions are still usable.
+            if (detailLat === undefined || detailLon === undefined) {
+              return geocodePredictionFallback();
+            }
+
             return {
               place_id: pred.place_id,
               display_name: pred.description,
-              lat: result?.geometry?.location?.lat?.toString() || "",
-              lon: result?.geometry?.location?.lng?.toString() || "",
+              lat: detailLat?.toString() || "",
+              lon: detailLon?.toString() || "",
             };
           } catch {
-            return { place_id: pred.place_id, display_name: pred.description, lat: "", lon: "" };
+            // If Place Details API fails (disabled/quota/restriction), still try geocode fallback.
+            return geocodePredictionFallback();
           }
         })
       );
 
       const valid = suggestions.filter((s) => s.lat && s.lon);
-      serverLog(`Google Autocomplete: ${valid.length} results for "${query}"`);
-      return res.json({ success: true, data: valid });
+      if (valid.length > 0) {
+        serverLog(`Google Autocomplete: ${valid.length} results for "${query}"`);
+        return res.json({ success: true, data: valid });
+      }
+
+      // If predictions exist but details did not provide coordinates, continue to Photon fallback.
+      serverLog(`Google Autocomplete had predictions but 0 coordinate-resolved results for "${query}". Falling back to Photon.`);
     }
 
     // ── Fallback: Photon (OSM) ──────────────────────────────────────────────
     const status = acResponse.data ? acResponse.data.status : "UNKNOWN";
     const errMsg = acResponse.data ? acResponse.data.error_message : "";
 
-    if (status !== "ZERO_RESULTS") {
+    if (status !== "ZERO_RESULTS" && status !== "OK") {
       serverLog(`GOOGLE Autocomplete ERROR: Status: ${status}, Message: ${errMsg}`);
       serverLog("Falling back to Photon (OSM)...");
     }
 
     try {
-      // Wide bbox (~250km) so distant cities still appear — Photon ranks centre results higher
-      let photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=15&lang=en`;
-
-      if (hasCoords) {
-        const delta = 2.25; // ≈ 250km wide bounding box
-        photonUrl += `&bbox=${[
-          userLon - delta, // west
-          userLat - delta, // south
-          userLon + delta, // east
-          userLat + delta, // north
-        ].join(",")}`;
-      }
+      // Wide fallback query so distant cities/states still appear
+      let photonUrl = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=40&lang=en`;
 
       const photonRes = await axios.get(photonUrl);
 
@@ -271,7 +319,7 @@ export const getAutocomplete = async (req, res) => {
           return cc === "in" || country === "india";
         });
 
-        // Sort nearest-first (50km = recommendation, not a hard cut-off)
+        // Sort nearest-first when user coordinates are available
         if (hasCoords) {
           features.sort((a, b) => {
             const dA = calculateDistance(userLat, userLon, a.geometry.coordinates[1], a.geometry.coordinates[0]);
@@ -290,11 +338,40 @@ export const getAutocomplete = async (req, res) => {
           };
         });
 
-        serverLog(`Photon fallback: ${suggestions.length} India results for "${query}"`);
-        return res.json({ success: true, data: suggestions });
+        if (suggestions.length > 0) {
+          serverLog(`Photon fallback: ${suggestions.length} India results for "${query}"`);
+          return res.json({ success: true, data: suggestions });
+        }
       }
     } catch (photonErr) {
       serverLog(`Photon fallback failed: ${photonErr.message}`);
+    }
+
+    // Final fallback: direct geocode for the full query to at least return one usable result.
+    try {
+      const geoFinal = await axios.get(`${GOOGLE_MAPS_API_URL}/geocode/json`, {
+        params: {
+          address: query,
+          key: getGoogleApiKey(),
+          region: "in",
+          components: "country:IN",
+        },
+      });
+      const r = geoFinal.data?.results?.[0];
+      const g = r?.geometry?.location;
+      if (g?.lat !== undefined && g?.lng !== undefined) {
+        return res.json({
+          success: true,
+          data: [{
+            place_id: r.place_id || `geo_${Date.now()}`,
+            display_name: r.formatted_address || query,
+            lat: g.lat.toString(),
+            lon: g.lng.toString(),
+          }]
+        });
+      }
+    } catch (geoErr) {
+      serverLog(`Final geocode fallback failed: ${geoErr.message}`);
     }
 
     res.json({ success: true, data: [], google_status: status, message: errMsg });
