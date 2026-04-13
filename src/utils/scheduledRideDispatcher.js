@@ -6,6 +6,14 @@ import { serverLog } from "./logger.js";
 import { sendPushNotification } from "./notifications.js";
 
 const ACTIVE_RIDE_STATUSES = ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"];
+const DISPATCH_COOLDOWN_MS = 3 * 60 * 1000;
+const MAX_PENDING_RETRIES = 6;
+
+const shouldDispatchWithCooldown = (booking, now = new Date()) => {
+    const last = booking?.lastScheduledDispatchAt ? new Date(booking.lastScheduledDispatchAt).getTime() : 0;
+    if (!last) return true;
+    return (now.getTime() - last) >= DISPATCH_COOLDOWN_MS;
+};
 
 /**
  * Dispatch a single scheduled booking to nearby drivers.
@@ -44,8 +52,10 @@ const dispatchBooking = async (booking) => {
 
         serverLog(`SCHEDULER: Found ${nearbyDrivers.length} nearby drivers for booking ${booking._id}`);
 
-        // Update booking status to pending so drivers can accept
+        // Update booking status + dispatch telemetry to avoid repeated spam.
         booking.status = "pending";
+        booking.lastScheduledDispatchAt = new Date();
+        booking.scheduledDispatchAttempts = Number(booking.scheduledDispatchAttempts || 0) + 1;
         await booking.save();
 
         if (nearbyDrivers.length === 0) {
@@ -106,6 +116,7 @@ export const startScheduledRideDispatcher = () => {
     // Run every minute: * * * * *
     cron.schedule("* * * * *", async () => {
         try {
+            const io = getIO();
             const now = new Date();
             // Dispatch rides whose scheduledDate is within the current minute window
             // i.e., between [now - 30s] and [now + 90s] to handle any slight delay
@@ -124,6 +135,9 @@ export const startScheduledRideDispatcher = () => {
             if (dueSoon.length > 0) {
                 serverLog(`SCHEDULER: Found ${dueSoon.length} scheduled ride(s) due NOW`);
                 for (const booking of dueSoon) {
+                    if (!shouldDispatchWithCooldown(booking, now)) {
+                        continue;
+                    }
                     await dispatchBooking(booking);
                 }
             }
@@ -159,6 +173,7 @@ export const startScheduledRideDispatcher = () => {
                     booking.driver = null;
                     booking.status = "pending";
                     booking.rideTimeReminderSent = false;
+                    booking.lastScheduledDispatchAt = null;
                     await booking.save();
 
                     io.to(driverId).emit("rideRequestCancelled", {
@@ -232,6 +247,26 @@ export const startScheduledRideDispatcher = () => {
             }).limit(20);
 
             for (const booking of overduePending) {
+                if (Number(booking.scheduledDispatchAttempts || 0) >= MAX_PENDING_RETRIES) {
+                    booking.status = "cancelled";
+                    booking.cancelledBy = "system";
+                    booking.cancellationReason = "Auto-cancelled: no driver accepted after multiple retries";
+                    await booking.save();
+
+                    if (booking.user) {
+                        io.to(booking.user.toString()).emit("rideStatusUpdate", {
+                            bookingId: booking._id.toString(),
+                            status: "cancelled",
+                            message: "No drivers accepted your scheduled ride in time. Please rebook."
+                        });
+                    }
+                    serverLog(`SCHEDULER: Auto-cancelled booking ${booking._id} after max retries`);
+                    continue;
+                }
+
+                if (!shouldDispatchWithCooldown(booking, now)) {
+                    continue;
+                }
                 await dispatchBooking(booking);
             }
         } catch (err) {

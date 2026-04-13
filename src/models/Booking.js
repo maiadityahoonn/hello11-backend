@@ -189,6 +189,14 @@ const bookingSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
+    scheduledDispatchAttempts: {
+      type: Number,
+      default: 0
+    },
+    lastScheduledDispatchAt: {
+      type: Date,
+      default: null
+    },
     totalFare: {
       type: Number,
       default: 0
