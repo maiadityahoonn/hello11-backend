@@ -338,18 +338,20 @@ export const getUserBookings = async (req, res) => {
     const query = { user: req.userId };
 
     // Handle bookingType filtering with automatic status filtering
+    const now = new Date();
+
     if (bookingType === "schedule") {
       query.bookingType = "schedule";
-      // Do not force "scheduled" status here.
-      // Users expect all scheduled-booking lifecycle states (scheduled/accepted/arrived/started/completed/cancelled)
-      // to appear when filtering by bookingType=schedule.
+      // Keep user-side schedule split aligned with driver-side behavior:
+      // upcoming: scheduledDate >= now && status not in completed/cancelled
+      // history: everything else from scheduled bookings
       if (scheduleView === "upcoming") {
-        query.scheduledDate = { $gte: new Date() };
+        query.scheduledDate = { $gte: now };
         query.status = { $nin: ["completed", "cancelled"] };
       } else if (scheduleView === "history") {
         query.$or = [
-          { status: { $nin: ["scheduled"] } },
-          { status: "scheduled", scheduledDate: { $lt: new Date() } }
+          { scheduledDate: { $lt: now } },
+          { status: { $in: ["completed", "cancelled"] } }
         ];
       }
     } else if (bookingType === "now") {
@@ -386,8 +388,18 @@ export const getUserBookings = async (req, res) => {
     console.log('[getUserBookings] Final query filter:', JSON.stringify(query));
 
     // Parallelize count and data fetch for speed
-    // Sort by scheduledDate for scheduled rides, createdAt for now rides
-    const sortOrder = bookingType === "schedule" ? { scheduledDate: 1 } : { createdAt: -1 };
+    // Sorting:
+    // - schedule/upcoming => nearest scheduled first
+    // - schedule/history  => newest activity first
+    // - now/all           => newest created first
+    let sortOrder = { createdAt: -1 };
+    if (bookingType === "schedule" && scheduleView === "upcoming") {
+      sortOrder = { scheduledDate: 1 };
+    } else if (bookingType === "schedule" && scheduleView === "history") {
+      sortOrder = { updatedAt: -1, createdAt: -1 };
+    } else if (bookingType === "schedule") {
+      sortOrder = { scheduledDate: 1 };
+    }
 
     const [bookings, total] = await Promise.all([
       Booking.find(query)
