@@ -17,7 +17,7 @@ const notificationSchema = new mongoose.Schema(
         },
         type: {
             type: String,
-            enum: ["ride_accepted", "ride_nearby", "ride_arrived", "ride_started", "ride_completed", "ride_cancelled", "promo", "system"],
+            enum: ["ride_accepted", "ride_nearby", "ride_arrived", "ride_started", "ride_completed", "ride_cancelled", "suggest_return", "promo", "system"],
             required: true
         },
         bookingId: {

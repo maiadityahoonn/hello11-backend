@@ -1800,9 +1800,21 @@ export const cancelBooking = async (req, res) => {
       });
     }
 
+    // Safety guard: prevent cancellation once trip has started/waiting phase.
+    if (["started", "waiting", "return_ride_started"].includes(String(booking.status))) {
+      return res.status(400).json({
+        message: "Ride has already started. Cancellation is not allowed at this stage."
+      });
+    }
+
+    const previousStatus = booking.status;
     booking.status = "cancelled";
     booking.cancellationReason = reason || "Cancelled by driver";
+    booking.cancelledBy = "driver";
     await booking.save();
+    serverLog(
+      `[Cancel][Driver] booking=${booking._id} driver=${req.driverId} previousStatus=${previousStatus} newStatus=${booking.status} reason="${booking.cancellationReason}"`
+    );
 
     // Make driver available again and clear current ride
     await Driver.findByIdAndUpdate(req.driverId, {
