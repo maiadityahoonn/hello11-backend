@@ -36,9 +36,14 @@ const getBookingTotalFare = (booking) =>
 // ================= GET ACTIVE BOOKING (Persistence) =================
 export const getActiveBooking = async (req, res) => {
   try {
+    const now = new Date();
     const booking = await Booking.findOne({
       user: req.userId,
-      status: { $in: ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"] }
+      status: { $in: ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"] },
+      $or: [
+        { bookingType: { $ne: "schedule" } },
+        { scheduledDate: { $lte: now } }
+      ]
     })
       .populate("user", "name mobile profileImage")
       .populate("driver", "name vehicleModel vehicleNumber rating profileImage mobile latitude longitude");

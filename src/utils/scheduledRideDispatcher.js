@@ -153,7 +153,7 @@ export const startScheduledRideDispatcher = () => {
                     $gte: windowStart,
                     $lte: windowEnd
                 }
-            }).populate("driver", "_id pushToken currentBooking");
+            }).populate("driver", "_id pushToken currentBooking name mobile vehicleModel vehicleNumber rating vehicleType profileImage");
 
             for (const booking of reminderBookings) {
                 const driverId = booking.driver?._id?.toString?.();
@@ -201,6 +201,31 @@ export const startScheduledRideDispatcher = () => {
                     scheduledDate: booking.scheduledDate,
                     message: "Scheduled ride time has started. Please go to pickup location."
                 });
+
+                if (booking.user) {
+                    io.to(booking.user.toString()).emit("rideAccepted", {
+                        booking: {
+                            id: booking._id.toString(),
+                            status: booking.status,
+                            bookingType: "schedule",
+                            scheduledDate: booking.scheduledDate,
+                            scheduledRideReady: true,
+                            pickupLatitude: booking.pickupLatitude,
+                            pickupLongitude: booking.pickupLongitude,
+                            dropLatitude: booking.dropLatitude,
+                            dropLongitude: booking.dropLongitude,
+                            driver: {
+                                name: booking.driver?.name,
+                                mobile: booking.driver?.mobile,
+                                vehicleModel: booking.driver?.vehicleModel,
+                                vehicleNumber: booking.driver?.vehicleNumber,
+                                vehicleType: booking.driver?.vehicleType,
+                                rating: booking.driver?.rating,
+                                profileImage: booking.driver?.profileImage
+                            }
+                        }
+                    });
+                }
 
                 if (booking.driver.pushToken) {
                     sendPushNotification(
