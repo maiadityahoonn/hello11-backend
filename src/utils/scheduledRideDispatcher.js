@@ -29,6 +29,7 @@ const dispatchBooking = async (booking) => {
         const driverQuery = {
             available: true,
             online: true,
+            isVerified: true,
             location: {
                 $near: {
                     $geometry: {

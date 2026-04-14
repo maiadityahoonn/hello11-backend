@@ -178,7 +178,7 @@ export const createBooking = async (req, res) => {
             available: true,
             isVerified: true,
             location: locationWithin
-          })
+          }),
         ]);
 
         serverLog(
