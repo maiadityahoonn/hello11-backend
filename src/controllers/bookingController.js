@@ -330,7 +330,7 @@ export const getUserBookings = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
-    const { bookingType, status, rideType, paymentStatus, startDate, endDate } = req.query;
+    const { bookingType, scheduleView, status, rideType, paymentStatus, startDate, endDate } = req.query;
 
     console.log('[getUserBookings] Input params:', { bookingType, status, rideType, paymentStatus });
 
@@ -343,6 +343,15 @@ export const getUserBookings = async (req, res) => {
       // Do not force "scheduled" status here.
       // Users expect all scheduled-booking lifecycle states (scheduled/accepted/arrived/started/completed/cancelled)
       // to appear when filtering by bookingType=schedule.
+      if (scheduleView === "upcoming") {
+        query.scheduledDate = { $gte: new Date() };
+        query.status = { $nin: ["completed", "cancelled"] };
+      } else if (scheduleView === "history") {
+        query.$or = [
+          { status: { $nin: ["scheduled"] } },
+          { status: "scheduled", scheduledDate: { $lt: new Date() } }
+        ];
+      }
     } else if (bookingType === "now") {
       query.bookingType = "now";
       // For "now" rides, exclude the "scheduled" status - show only completed, cancelled, accepted, etc.
@@ -353,6 +362,7 @@ export const getUserBookings = async (req, res) => {
 
     // Override with explicit status if provided in query
     if (status) {
+      delete query.$or;
       query.status = status;
     }
 
@@ -438,14 +448,19 @@ export const getScheduledHistory = async (req, res) => {
     const skip = (page - 1) * limit;
     const { status, rideType, paymentStatus, startDate, endDate } = req.query;
 
+    const now = new Date();
     const query = {
       user: req.userId,
       bookingType: "schedule",
-      status: { $nin: ["scheduled"] }
+      $or: [
+        { status: { $nin: ["scheduled"] } },
+        { status: "scheduled", scheduledDate: { $lt: now } }
+      ]
     };
 
     // Add optional filters
     if (status && status !== "all") {
+      delete query.$or;
       query.status = status;
     }
     if (rideType && rideType !== "all") {
