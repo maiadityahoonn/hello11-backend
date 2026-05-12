@@ -22,7 +22,15 @@ const userSchema = new mongoose.Schema(
     },
     password: {
       type: String,
-      required: true
+      required: false
+    },
+    loginOtp: {
+      type: String,
+      default: null
+    },
+    loginOtpExpiry: {
+      type: Date,
+      default: null
     },
     profileImage: {
       type: String,

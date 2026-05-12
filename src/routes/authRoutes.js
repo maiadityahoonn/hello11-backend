@@ -1,17 +1,19 @@
 import express from "express";
-import { signup, signin, forgotPassword, resetPassword } from "../controllers/authController.js";
+import { signup, requestLoginOTP, verifyLoginOTP, forgotPassword, resetPassword } from "../controllers/authController.js";
 
 const router = express.Router();
 
-// signup
+// signup (Request OTP)
 router.post("/signup", signup);
 
-// login
-router.post("/signin", signin);
-// forgot password
-router.post("/forgot-password", forgotPassword);
+// request login OTP
+router.post("/request-otp", requestLoginOTP);
 
-// reset password
+// verify OTP (for both signup and login)
+router.post("/verify-otp", verifyLoginOTP);
+
+// Legacy aliases (optional, but good for backward compatibility if needed)
+router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
 
 export default router;

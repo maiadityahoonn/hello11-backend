@@ -29,7 +29,8 @@ import {
   requestPayout,
   updateProfileImage,
   forgotPassword,
-  resetPassword
+  resetPassword,
+  verifyDriverOTP
 } from "../controllers/driverController.js";
 import { getBookingById } from "../controllers/bookingController.js";
 import { authenticateDriver } from "../middleware/driverAuth.js";
@@ -53,6 +54,9 @@ router.post("/forgot-password", forgotPassword);
 
 // POST /api/drivers/reset-password - Reset password
 router.post("/reset-password", resetPassword);
+
+// POST /api/drivers/verify-otp - Verify OTP (for both register and login)
+router.post("/verify-otp", verifyDriverOTP);
 
 
 // ================= PROTECTED ROUTES (Require Authentication) =================
@@ -122,9 +126,6 @@ router.get("/reviews", authenticateDriver, getDriverReviews);
 
 // GET /api/drivers/dashboard - Get driver dashboard stats
 router.get("/dashboard", authenticateDriver, getDriverDashboard);
-
-// PUT /api/drivers/password - Change password
-router.put("/password", authenticateDriver, changePassword);
 
 // POST /api/drivers/logout - Logout driver
 router.post("/logout", authenticateDriver, logoutDriver);

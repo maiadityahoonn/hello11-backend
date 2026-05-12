@@ -3,7 +3,7 @@ import Booking from "../models/Booking.js";
 import User from "../models/User.js";
 import Review from "../models/Review.js";
 import { createNotification } from "./notificationController.js";
-import bcrypt from "bcryptjs";
+import { sendWhatsAppOTP } from "../utils/whatsapp.js";
 import jwt from "jsonwebtoken";
 import Payout from "../models/Payout.js";
 import Transaction from "../models/Transaction.js";
@@ -47,14 +47,14 @@ const generateDriverToken = (driverId) => {
   );
 };
 
-// ================= DRIVER REGISTRATION =================
+// ================= DRIVER REGISTRATION (REQUEST OTP) =================
 export const registerDriver = async (req, res) => {
   try {
-    const { name, mobile, password, vehicleNumber, vehicleModel, vehicleType, serviceType } = req.body;
+    const { name, mobile, vehicleNumber, vehicleModel, vehicleType, serviceType } = req.body;
 
-    if (!name || !mobile || !password || !vehicleNumber || !vehicleModel) {
+    if (!name || !mobile || !vehicleNumber || !vehicleModel) {
       return res.status(400).json({
-        message: "All fields are required: name, mobile, password, vehicleNumber, vehicleModel"
+        message: "All fields are required: name, mobile, vehicleNumber, vehicleModel"
       });
     }
 
@@ -65,39 +65,35 @@ export const registerDriver = async (req, res) => {
       });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
     const vType = vehicleType || "5seater";
     let sType = serviceType || "cab";
 
     const driver = await Driver.create({
       name,
       mobile,
-      password: hashedPassword,
       vehicleNumber,
       vehicleModel,
       vehicleType: vType,
       serviceType: sType,
+      loginOtp: otp,
+      loginOtpExpiry: otpExpiry,
       available: true
     });
 
-    const token = generateDriverToken(driver._id);
+    const result = await sendWhatsAppOTP(mobile, otp);
 
-    res.status(201).json({
-      message: "Driver registered successfully",
-      token,
-      driver: {
-        id: driver._id,
-        name: driver.name,
-        mobile: driver.mobile,
-        vehicleModel: driver.vehicleModel,
-        vehicleNumber: driver.vehicleNumber,
-        vehicleType: driver.vehicleType,
-        serviceType: driver.serviceType,
-        rating: driver.rating,
-        available: driver.available,
-        online: driver.online || false
-      }
-    });
+    if (result.success) {
+      res.status(201).json({
+        message: "Driver registration OTP sent successfully",
+        mobile
+      });
+    } else {
+      await Driver.findByIdAndDelete(driver._id); // Cleanup if SMS fails
+      res.status(500).json({ message: "Failed to send registration OTP", error: result.error });
+    }
   } catch (error) {
     res.status(500).json({
       message: "Driver registration failed",
@@ -106,30 +102,73 @@ export const registerDriver = async (req, res) => {
   }
 };
 
-// ================= DRIVER LOGIN =================
+// ================= DRIVER LOGIN (REQUEST OTP) =================
 export const loginDriver = async (req, res) => {
   try {
-    const { mobile, password } = req.body;
+    const { mobile } = req.body;
 
-    if (!mobile || !password) {
+    if (!mobile) {
       return res.status(400).json({
-        message: "Mobile and password are required"
+        message: "Mobile is required"
       });
     }
 
     const driver = await Driver.findOne({ mobile });
     if (!driver) {
-      return res.status(400).json({
-        message: "Invalid mobile or password"
+      return res.status(404).json({
+        message: "Mobile number not registered. Please register as a driver."
       });
     }
 
-    const isMatch = await bcrypt.compare(password, driver.password);
-    if (!isMatch) {
-      return res.status(400).json({
-        message: "Invalid mobile or password"
-      });
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+
+    driver.loginOtp = otp;
+    driver.loginOtpExpiry = otpExpiry;
+    await driver.save();
+
+    const result = await sendWhatsAppOTP(mobile, otp);
+
+    if (result.success) {
+      res.json({ message: "OTP sent successfully to WhatsApp", mobile });
+    } else {
+      res.status(500).json({ message: "Failed to send OTP", error: result.error });
     }
+  } catch (error) {
+    res.status(500).json({
+      message: "Driver login request failed",
+      error: error.message
+    });
+  }
+};
+
+// ================= VERIFY DRIVER OTP =================
+export const verifyDriverOTP = async (req, res) => {
+  try {
+    const { mobile, otp } = req.body;
+
+    if (!mobile || !otp) {
+      return res.status(400).json({ message: "Mobile and OTP are required" });
+    }
+
+    const driver = await Driver.findOne({ mobile });
+
+    if (!driver || !driver.loginOtp) {
+      return res.status(400).json({ message: "Invalid request" });
+    }
+
+    if (driver.loginOtp !== otp) {
+      return res.status(400).json({ message: "Invalid OTP" });
+    }
+
+    if (driver.loginOtpExpiry < new Date()) {
+      return res.status(400).json({ message: "OTP expired" });
+    }
+
+    // Clear OTP after successful verification
+    driver.loginOtp = null;
+    driver.loginOtpExpiry = null;
+    await driver.save();
 
     const token = generateDriverToken(driver._id);
 
@@ -152,10 +191,7 @@ export const loginDriver = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({
-      message: "Driver login failed",
-      error: error.message
-    });
+    res.status(500).json({ message: "Driver verification failed", error: error.message });
   }
 };
 
@@ -1213,7 +1249,7 @@ export const updateBookingStatus = async (req, res) => {
         await createNotification({
           userId: booking.user,
           title: "Ride Completed",
-          body: `Your ride is completed. Final fare: ₹${booking.totalFare}. Hope you had a great trip!`,
+          body: `Your ride is completed. Final fare: â‚¹${booking.totalFare}. Hope you had a great trip!`,
           type: "ride_completed",
           bookingId: booking._id
         });
@@ -1736,7 +1772,7 @@ export const completeRide = async (req, res) => {
       await createNotification({
         userId: booking.user,
         title: "Ride Completed",
-        body: `Your ride is completed. Final fare: ₹${booking.totalFare}. Hope you had a great trip!`,
+        body: `Your ride is completed. Final fare: â‚¹${booking.totalFare}. Hope you had a great trip!`,
         type: "ride_completed",
         bookingId: booking._id
       });
@@ -1785,6 +1821,47 @@ export const completeRide = async (req, res) => {
 };
 
 // ================= CANCEL BOOKING (DRIVER) =================
+// ================= CALCULATE AND APPLY PENALTY =================
+export const calculateAndUpdatePenalty = async (booking) => {
+  // Only apply penalty if waiting started and still in waiting or arriving phase
+  if (booking.waitingStartedAt && ["waiting", "arrived", "accepted"].includes(booking.status)) {
+    const now = new Date();
+    const waitingTimeSeconds = Math.floor((now - new Date(booking.waitingStartedAt)) / 1000);
+    const gracePeriodSeconds = booking.waitingLimit || 3600;
+
+    if (waitingTimeSeconds > gracePeriodSeconds) {
+      const excessSeconds = waitingTimeSeconds - gracePeriodSeconds;
+      const penaltyMinutes = Math.floor(excessSeconds / 60);
+      const penaltyRatePerHour = 100; // ₹100 per hour
+      const newPenalty = Math.floor((penaltyMinutes / 60) * penaltyRatePerHour);
+
+      if (newPenalty > (booking.penaltyApplied || 0)) {
+        booking.penaltyApplied = newPenalty;
+        booking.totalFare = (booking.fare || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
+        await booking.save();
+
+        try {
+          const io = getIO();
+          const rooms = [booking.user.toString(), booking.driver.toString()];
+          rooms.forEach((room) => {
+            io.to(room).emit("penaltyApplied", {
+              bookingId: booking._id.toString(),
+              penaltyApplied: booking.penaltyApplied,
+              totalFare: booking.totalFare
+            });
+          });
+          serverLog(`[Penalty] Applied ₹${newPenalty} to booking ${booking._id}`);
+        } catch (socketError) {
+          serverLog(`[Penalty] Socket error: ${socketError.message}`);
+        }
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
+// ================= CANCEL BOOKING (DRIVER) =================
 export const cancelBooking = async (req, res) => {
   try {
     const { reason } = req.body;
@@ -1800,11 +1877,17 @@ export const cancelBooking = async (req, res) => {
       });
     }
 
-    // Safety guard: prevent cancellation once trip has started/waiting phase.
-    if (["started", "waiting", "return_ride_started"].includes(String(booking.status))) {
+    // Safety guard: prevent cancellation once trip has started.
+    // Allowed to cancel during 'waiting' so penalty can be calculated.
+    if (["started", "return_ride_started"].includes(String(booking.status))) {
       return res.status(400).json({
         message: "Ride has already started. Cancellation is not allowed at this stage."
       });
+    }
+
+    // If cancelling during waiting, calculate final penalty
+    if (booking.status === "waiting") {
+      await calculateAndUpdatePenalty(booking);
     }
 
     const previousStatus = booking.status;
@@ -1812,448 +1895,23 @@ export const cancelBooking = async (req, res) => {
     booking.cancellationReason = reason || "Cancelled by driver";
     booking.cancelledBy = "driver";
     await booking.save();
-    serverLog(
-      `[Cancel][Driver] booking=${booking._id} driver=${req.driverId} previousStatus=${previousStatus} newStatus=${booking.status} reason="${booking.cancellationReason}"`
-    );
 
-    // Make driver available again and clear current ride
+    // Make driver available again
     await Driver.findByIdAndUpdate(req.driverId, {
       available: true,
       currentBooking: null
     });
 
-    // Notify User
-    try {
-      const { getIO } = await import("../utils/socketLogic.js");
-      getIO().to(booking.user.toString()).emit("bookingCancelledByDriver", {
-        bookingId: booking._id,
-        message: "The driver has cancelled this ride."
-      });
+    serverLog(
+      `[Cancel][Driver] booking=${booking._id} driver=${req.driverId} previousStatus=${previousStatus} newStatus=${booking.status} reason="${booking.cancellationReason}"`
+    );
 
-      // Create persistent notification
-      await createNotification({
-        userId: booking.user,
-        title: "Ride Cancelled",
-        body: `The driver has cancelled the ride. Reason: ${booking.cancellationReason}`,
-        type: "ride_cancelled",
-        bookingId: booking._id
-      });
-    } catch (socketError) {
-      console.error(`Socket notification error: ${socketError.message}`);
-    }
-
-    res.json({
-      message: "Booking cancelled successfully",
-      booking: {
-        id: booking._id,
-        status: booking.status,
-        cancellationReason: booking.cancellationReason
-      }
-    });
+    res.json({ message: "Booking cancelled successfully", booking });
   } catch (error) {
+    serverLog(`[Cancel][Error] ${error.message}`);
     res.status(500).json({
       message: "Failed to cancel booking",
       error: error.message
     });
   }
 };
-
-// ================= GET DASHBOARD STATS =================
-export const getDriverDashboard = async (req, res) => {
-  try {
-    const driver = await Driver.findById(req.driverId).select("-password");
-
-    if (!driver) {
-      return res.status(404).json({
-        message: "Driver not found"
-      });
-    }
-
-    // Get today's date
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    // Today's completed trips
-    const todayTrips = await Booking.countDocuments({
-      driver: req.driverId,
-      status: "completed",
-      createdAt: { $gte: today }
-    });
-
-    // Calculate real average rating for dashboard
-    const allReviews = await Review.find({ driver: req.driverId });
-    const avgRatingDash = allReviews.length > 0
-      ? allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length
-      : driver.rating;
-
-    // Today's earnings
-    const todayBookings = await Booking.find({
-      driver: req.driverId,
-      status: "completed",
-      createdAt: { $gte: today }
-    });
-    const todayEarnings = todayBookings.reduce(
-      (sum, b) => sum + Number((b.fare || 0) + (b.nightSurcharge || 0) + (b.returnTripFare || 0) + (b.penaltyApplied || 0) + (b.tollFee || 0)),
-      0
-    );
-
-    // Total completed trips
-    const totalTrips = await Booking.countDocuments({
-      driver: req.driverId,
-      status: "completed"
-    });
-
-    // Pending bookings count
-    const pendingBookings = await Booking.countDocuments({
-      status: "pending"
-    });
-
-    // Current booking using explicit tracking
-    let currentBooking = null;
-    const now = new Date();
-    if (driver.currentBooking) {
-      currentBooking = await Booking.findById(driver.currentBooking)
-        .populate("user", "name mobile");
-
-      if (currentBooking && isFutureScheduledBooking(currentBooking)) {
-        await Driver.findByIdAndUpdate(req.driverId, { currentBooking: null });
-        currentBooking = null;
-      }
-    }
-
-    // Fallback only if needed (safety net)
-    if (!currentBooking) {
-      currentBooking = await Booking.findOne({
-        driver: req.driverId,
-        status: { $in: ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"] },
-        $or: [
-          { bookingType: { $ne: "schedule" } },
-          { scheduledDate: { $lte: now } }
-        ]
-      }).sort({ createdAt: -1 }).populate("user", "name mobile");
-
-      // If found via fallback, sync it to driver.currentBooking
-      if (currentBooking) {
-        await Driver.findByIdAndUpdate(req.driverId, { currentBooking: currentBooking._id });
-      }
-    }
-
-    // Double-check: if booking exists but is cancelled/completed, clear it
-    if (currentBooking && (currentBooking.status === "cancelled" || currentBooking.status === "completed")) {
-      await Driver.findByIdAndUpdate(req.driverId, { currentBooking: null, available: true });
-      currentBooking = null;
-    }
-
-    const totalEarningsAgg = await Booking.aggregate([
-      { $match: { driver: driver._id, status: "completed" } },
-      {
-        $project: {
-          effectiveTotal: {
-            $add: ["$fare", { $ifNull: ["$nightSurcharge", 0] }, { $ifNull: ["$returnTripFare", 0] }, { $ifNull: ["$penaltyApplied", 0] }, { $ifNull: ["$tollFee", 0] }]
-          }
-        }
-      },
-      { $group: { _id: null, total: { $sum: "$effectiveTotal" } } }
-    ]);
-    const totalEarnings = totalEarningsAgg[0]?.total || 0;
-
-    res.json({
-      dashboard: {
-        driver: {
-          id: driver._id,
-          name: driver.name,
-          rating: Math.round(avgRatingDash * 10) / 10,
-          available: driver.available,
-          online: driver.online || false,
-          isVerified: driver.isVerified || false,
-          verificationNote: driver.verificationNote || "",
-          vehicleType: driver.vehicleType,
-          serviceType: driver.serviceType,
-          profileImage: driver.profileImage || ""
-        },
-        stats: {
-          todayTrips,
-          todayEarnings,
-          totalTrips,
-          totalEarnings,
-          pendingBookings,
-          rating: Math.round(avgRatingDash * 10) / 10
-        },
-        currentBooking: currentBooking ? {
-          id: currentBooking._id,
-          pickupLocation: currentBooking.pickupLocation,
-          dropLocation: currentBooking.dropLocation,
-          status: currentBooking.status,
-          user: currentBooking.user
-        } : null
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to fetch dashboard",
-      error: error.message
-    });
-  }
-};
-
-// ================= CHANGE PASSWORD =================
-export const changePassword = async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({
-        message: "Current password and new password are required"
-      });
-    }
-
-    const driver = await Driver.findById(req.driverId);
-
-    if (!driver) {
-      return res.status(404).json({
-        message: "Driver not found"
-      });
-    }
-
-    const isMatch = await bcrypt.compare(currentPassword, driver.password);
-    if (!isMatch) {
-      return res.status(400).json({
-        message: "Current password is incorrect"
-      });
-    }
-
-    driver.password = await bcrypt.hash(newPassword, 10);
-    await driver.save();
-
-    res.json({
-      message: "Password changed successfully"
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to change password",
-      error: error.message
-    });
-  }
-};
-
-// ================= LOGOUT DRIVER =================
-export const logoutDriver = async (req, res) => {
-  try {
-    // In a real app, you might want to blacklist the token
-    // For now, we just return success
-    // Make driver unavailable on logout
-    await Driver.findByIdAndUpdate(req.driverId, { available: false });
-
-    res.json({
-      message: "Logout successful"
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Logout failed",
-      error: error.message
-    });
-  }
-};
-
-// ================= REQUEST PAYOUT =================
-export const requestPayout = async (req, res) => {
-  try {
-    const { amount } = req.body;
-
-    if (!amount || amount <= 0) {
-      return res.status(400).json({
-        message: "Invalid payout amount"
-      });
-    }
-
-    const driver = await Driver.findById(req.driverId);
-    if (!driver) {
-      return res.status(404).json({
-        message: "Driver not found"
-      });
-    }
-
-    if (amount > (driver.totalEarnings || 0)) {
-      return res.status(400).json({
-        message: "Insufficient balance"
-      });
-    }
-
-    const payout = await Payout.create({
-      driver: req.driverId,
-      amount,
-      status: "pending"
-    });
-
-    res.status(201).json({
-      message: "Payout request submitted successfully",
-      payout
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to submit payout request",
-      error: error.message
-    });
-  }
-};
-
-// ================= UPDATE PROFILE IMAGE =================
-export const updateProfileImage = async (req, res) => {
-  try {
-    let { profileImage } = req.body;
-
-    if (!profileImage) {
-      return res.status(400).json({
-        message: "Profile image is required"
-      });
-    }
-
-    // If it's a base64 string, upload to ImageKit
-    if (profileImage.startsWith('data:')) {
-      const fileName = `profile_${req.driverId}_${Date.now()}.jpg`;
-      const uploadResponse = await uploadToImageKit(profileImage, fileName, "/profile_images");
-      profileImage = uploadResponse.url;
-    }
-
-    const driver = await Driver.findByIdAndUpdate(
-      req.driverId,
-      { profileImage },
-      { new: true }
-    );
-
-    if (!driver) {
-      return res.status(404).json({
-        message: "Driver not found"
-      });
-    }
-
-    res.json({
-      message: "Profile image updated successfully",
-      profileImage: driver.profileImage
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to update profile image",
-      error: error.message
-    });
-  }
-};
-
-// ================= FORGOT PASSWORD =================
-export const forgotPassword = async (req, res) => {
-  try {
-    const { mobile } = req.body;
-
-    if (!mobile) {
-      return res.status(400).json({
-        message: "Mobile number is required"
-      });
-    }
-
-    const driver = await Driver.findOne({ mobile });
-
-    if (!driver) {
-      return res.status(404).json({
-        message: "Driver with this mobile number not found"
-      });
-    }
-
-    // In a real app, generate a random OTP and send via SMS
-    // For now, we'll use a mock OTP: 1234
-    const otp = "1234";
-
-    res.json({
-      message: "OTP sent successfully (MOCK: 1234)",
-      otp: otp // Returning OTP for demo purposes
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to send OTP",
-      error: error.message
-    });
-  }
-};
-
-// ================= RESET PASSWORD =================
-export const resetPassword = async (req, res) => {
-  try {
-    const { mobile, otp, newPassword } = req.body;
-
-    if (!mobile || !otp || !newPassword) {
-      return res.status(400).json({
-        message: "Mobile, OTP and new password are required"
-      });
-    }
-
-    // Verify OTP (mock verification)
-    if (otp !== "1234") {
-      return res.status(400).json({
-        message: "Invalid OTP"
-      });
-    }
-
-    const driver = await Driver.findOne({ mobile });
-
-    if (!driver) {
-      return res.status(404).json({
-        message: "Driver not found"
-      });
-    }
-
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
-    driver.password = hashedPassword;
-    await driver.save();
-
-    res.json({
-      message: "Password reset successfully"
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Failed to reset password",
-      error: error.message
-    });
-  }
-};
-
-// ================= CALCULATE AND UPDATE PENALTY =================
-export const calculateAndUpdatePenalty = async (booking) => {
-  if (!booking || !booking.waitingStartedAt) return;
-
-  const now = new Date();
-  const waitingTimeSeconds = Math.floor((now - new Date(booking.waitingStartedAt)) / 1000);
-  const gracePeriodSeconds = booking.waitingLimit || 3600;
-
-  if (waitingTimeSeconds > gracePeriodSeconds) {
-    const excessSeconds = waitingTimeSeconds - gracePeriodSeconds;
-    const penaltyMinutes = Math.floor(excessSeconds / 60);
-    const penaltyRatePerMin = 2; // ₹2 per minute
-    const newPenalty = penaltyMinutes * penaltyRatePerMin;
-
-    if (newPenalty !== booking.penaltyApplied) {
-      booking.penaltyApplied = newPenalty;
-      // Recalculate total fare including penalty
-      booking.totalFare = (booking.fare || 0) + (booking.returnTripFare || 0) + (booking.penaltyApplied || 0) + (booking.tollFee || 0);
-      await booking.save();
-
-      // Emit update via socket
-      try {
-        const io = getIO();
-        const rooms = [booking.user.toString(), booking.driver.toString()];
-        rooms.forEach((room) => {
-          io.to(room).emit("penaltyApplied", {
-            bookingId: booking._id.toString(),
-            penaltyApplied: booking.penaltyApplied,
-            totalFare: booking.totalFare
-          });
-        });
-        serverLog(`[Penalty] Applied ₹${newPenalty} to booking ${booking._id}`);
-      } catch (socketError) {
-        serverLog(`[Penalty] Socket error: ${socketError.message}`);
-      }
-      return true;
-    }
-  }
-  return false;
-};
-
-
