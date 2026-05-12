@@ -20,18 +20,12 @@ import {
   verifyRideOtp,
   completeRide,
   cancelBooking,
-  getDriverDashboard,
-  changePassword,
-  logoutDriver,
   toggleOnlineStatus,
   updateDocuments,
   updateTollFee,
-  requestPayout,
-  updateProfileImage,
-  forgotPassword,
-  resetPassword,
   verifyDriverOTP
 } from "../controllers/driverController.js";
+import { forgotPassword, resetPassword } from "../controllers/authController.js";
 import { getBookingById } from "../controllers/bookingController.js";
 import { authenticateDriver } from "../middleware/driverAuth.js";
 import { cacheData } from "../middleware/cacheMiddleware.js";
@@ -72,9 +66,6 @@ router.put("/vehicle", authenticateDriver, updateVehicleDetails);
 
 // PUT /api/drivers/documents - Update driver documents
 router.put("/documents", authenticateDriver, updateDocuments);
-
-// PUT /api/drivers/profile-image - Update profile image
-router.put("/profile-image", authenticateDriver, updateProfileImage);
 
 // PUT /api/drivers/location - Update driver location
 router.put("/location", authenticateDriver, updateDriverLocation);
@@ -123,15 +114,6 @@ router.get("/earnings", authenticateDriver, getDriverEarnings);
 
 // GET /api/drivers/reviews - Get driver reviews
 router.get("/reviews", authenticateDriver, getDriverReviews);
-
-// GET /api/drivers/dashboard - Get driver dashboard stats
-router.get("/dashboard", authenticateDriver, getDriverDashboard);
-
-// POST /api/drivers/logout - Logout driver
-router.post("/logout", authenticateDriver, logoutDriver);
-
-// POST /api/drivers/payout - Request payout
-router.post("/payout", authenticateDriver, requestPayout);
 
 // GET /api/drivers/:id - Get driver by ID
 router.get("/:id", getDriverById);
