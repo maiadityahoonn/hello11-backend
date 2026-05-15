@@ -4,6 +4,7 @@ import {
   loginDriver,
   getNearbyDrivers,
   getDriverById,
+  getDriverDashboard,
   getDriverProfile,
   updateDriverProfile,
   updateVehicleDetails,
@@ -114,6 +115,9 @@ router.get("/earnings", authenticateDriver, getDriverEarnings);
 
 // GET /api/drivers/reviews - Get driver reviews
 router.get("/reviews", authenticateDriver, getDriverReviews);
+
+// GET /api/drivers/dashboard - Get driver dashboard snapshot
+router.get("/dashboard", authenticateDriver, getDriverDashboard);
 
 // GET /api/drivers/:id - Get driver by ID
 router.get("/:id", getDriverById);

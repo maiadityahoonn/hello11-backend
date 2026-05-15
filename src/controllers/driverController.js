@@ -907,6 +907,112 @@ export const getCurrentBooking = async (req, res) => {
   }
 };
 
+// ================= DRIVER DASHBOARD =================
+export const getDriverDashboard = async (req, res) => {
+  try {
+    const driver = await Driver.findById(req.driverId).select("-password").lean();
+
+    if (!driver) {
+      return res.status(404).json({ message: "Driver not found" });
+    }
+
+    const now = new Date();
+    let currentBooking = null;
+
+    if (driver.currentBooking) {
+      const linkedBooking = await Booking.findById(driver.currentBooking)
+        .populate("user", "name mobile profileImage")
+        .lean();
+
+      if (
+        linkedBooking &&
+        !["completed", "cancelled"].includes(linkedBooking.status) &&
+        (!isFutureScheduledBooking(linkedBooking) || linkedBooking.scheduledRideReady === true)
+      ) {
+        currentBooking = linkedBooking;
+      }
+    }
+
+    if (!currentBooking) {
+      currentBooking = await Booking.findOne({
+        driver: req.driverId,
+        status: { $in: ["accepted", "driver_assigned", "arrived", "started", "waiting", "return_ride_started"] },
+        $or: [
+          { bookingType: { $ne: "schedule" } },
+          { scheduledDate: { $lte: now } },
+          { scheduledRideReady: true }
+        ]
+      })
+        .sort({ createdAt: -1 })
+        .populate("user", "name mobile profileImage")
+        .lean();
+    }
+
+    const [completedTrips, ratingAgg] = await Promise.all([
+      Booking.countDocuments({ driver: req.driverId, status: "completed" }),
+      Review.aggregate([
+        { $match: { driver: driver._id } },
+        { $group: { _id: null, avgRating: { $avg: "$rating" } } }
+      ])
+    ]);
+
+    const avgRating = ratingAgg[0]?.avgRating ?? driver.rating ?? 0;
+
+    res.json({
+      success: true,
+      dashboard: {
+        driver: {
+          id: driver._id,
+          name: driver.name,
+          mobile: driver.mobile,
+          vehicleModel: driver.vehicleModel,
+          vehicleNumber: driver.vehicleNumber,
+          vehicleType: driver.vehicleType,
+          serviceType: driver.serviceType,
+          rating: Math.round(avgRating * 10) / 10,
+          available: !!driver.available,
+          online: !!driver.online,
+          profileImage: driver.profileImage || "",
+          isVerified: !!driver.isVerified,
+          verificationNote: driver.verificationNote || "",
+          documents: driver.documents || {},
+          pendingCommission: driver.pendingCommission || 0,
+          unpaidRideCount: driver.unpaidRideCount || 0
+        },
+        stats: {
+          totalEarnings: Number(driver.totalEarnings || 0),
+          totalTrips: Number(driver.totalTrips || completedTrips || 0),
+          onlineTime: Number(driver.onlineTime || 0)
+        },
+        currentBooking: currentBooking
+          ? {
+              id: currentBooking._id,
+              _id: currentBooking._id,
+              status: currentBooking.status,
+              bookingType: currentBooking.bookingType,
+              rideType: currentBooking.rideType,
+              pickupLocation: currentBooking.pickupLocation,
+              pickupLatitude: currentBooking.pickupLatitude,
+              pickupLongitude: currentBooking.pickupLongitude,
+              dropLocation: currentBooking.dropLocation,
+              dropLatitude: currentBooking.dropLatitude,
+              dropLongitude: currentBooking.dropLongitude,
+              fare: currentBooking.fare,
+              distance: currentBooking.distance,
+              scheduledDate: currentBooking.scheduledDate || null,
+              user: currentBooking.user || null
+            }
+          : null
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to fetch dashboard",
+      error: error.message
+    });
+  }
+};
+
 
 // ================= ACCEPT BOOKING =================
 export const acceptBooking = async (req, res) => {
