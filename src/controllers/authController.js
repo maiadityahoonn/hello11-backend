@@ -25,9 +25,12 @@ export const requestLoginOTP = async (req, res) => {
     const otp = generateOTP();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
 
-    user.loginOtp = otp;
-    user.loginOtpExpiry = otpExpiry;
-    await user.save();
+    // Use atomic update to avoid failing on unrelated legacy field validations
+    // (e.g., old gender enum values like "Male"/"Female").
+    await User.updateOne(
+      { _id: user._id },
+      { $set: { loginOtp: otp, loginOtpExpiry: otpExpiry } }
+    );
 
     const result = await sendWhatsAppOTP(mobile, otp);
 
@@ -64,10 +67,11 @@ export const verifyLoginOTP = async (req, res) => {
       return res.status(400).json({ message: "OTP expired" });
     }
 
-    // Clear OTP after successful verification
-    user.loginOtp = null;
-    user.loginOtpExpiry = null;
-    await user.save();
+    // Clear OTP with atomic update to avoid unrelated validation failures.
+    await User.updateOne(
+      { _id: user._id },
+      { $set: { loginOtp: null, loginOtpExpiry: null } }
+    );
 
     const token = jwt.sign(
       { userId: user._id },

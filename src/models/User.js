@@ -18,7 +18,12 @@ const userSchema = new mongoose.Schema(
     gender: {
       type: String,
       enum: ["male", "female", "other", ""],
-      default: ""
+      default: "",
+      set: (value) => {
+        if (typeof value !== "string") return "";
+        const normalized = value.trim().toLowerCase();
+        return ["male", "female", "other"].includes(normalized) ? normalized : "";
+      }
     },
     password: {
       type: String,
